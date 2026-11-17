@@ -48,6 +48,12 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(cfg['sound_red'], 'C:/Users/test/Stemmero/sounds/red.wav')
         self.assertEqual(cfg['sound_yellow'], '')
 
+    def test_shutdown_seconds_preserve_zero_and_short_delays(self):
+        for seconds in (0, 1, 4, 60, 300):
+            with self.subTest(seconds=seconds):
+                cfg = self.load(json.dumps({'policy_countdown': seconds}))
+                self.assertEqual(cfg['policy_countdown'], seconds)
+
 
 class WarningTests(unittest.TestCase):
     def test_brief_shout_does_not_trigger(self):

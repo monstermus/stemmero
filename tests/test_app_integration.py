@@ -204,6 +204,16 @@ class WindowsAppTests(unittest.TestCase):
         self.assertTrue(self.app.root.winfo_exists())
         stop.assert_not_called()
 
+    def test_adult_can_save_zero_seconds_for_instant_shutdown(self):
+        self.unlock()
+        self.app.policy_vars['policy_action'].set('Sluk computeren')
+        self.app.policy_vars['policy_countdown'].set('0')
+        self.app._save_policy()
+        self.assertEqual(self.app.cfg['policy_countdown'], 0)
+        self.assertEqual(self.app.policy.config.countdown_seconds, 0)
+        self.assertEqual(self.app.policy.config.action, 'shutdown')
+        self.assertFalse(self.app.policy.executor.mock_calls)
+
 
 if __name__ == '__main__':
     unittest.main()

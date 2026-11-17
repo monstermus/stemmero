@@ -41,7 +41,7 @@ class PolicyConfig:
             raise ValueError('enabled skal være sand eller falsk')
         for name, minimum, maximum in (
             ('count', 1, MAX_EVENTS), ('window_seconds', 1, 86400),
-            ('countdown_seconds', 5, MAX_COUNTDOWN),
+            ('countdown_seconds', 0, MAX_COUNTDOWN),
         ):
             value = getattr(self, name)
             if type(value) is not int or not minimum <= value <= maximum:

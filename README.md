@@ -64,7 +64,7 @@ Funktionen er slået fra som standard. En voksen kan under **Gentagne advarsler*
 
 Et sammenhængende højt udbrud tæller én gang. Farveskift og gentagen afspilning tæller ikke ekstra. Stemmen skal være under den gule grænse i 1,2 sekunder, før et nyt udbrud kan tælle. Afprøvning af lyd og bannere, pause og manglende mikrofon tæller ikke. Historikken følger et rullende tidsvindue og overlever genstart.
 
-Skærmlås anmodes straks, når grænsen nås. Nedlukning har som standard 60 sekunders synlig nedtælling, der kan indstilles til 30 til 300 sekunder. **Annullér med PIN** kræver en ny PIN-godkendelse, også hvis indstillingerne allerede er låst op. Lukning eller genstart af appen nulstiller ikke en igangværende nedtælling.
+Skærmlås anmodes straks, når grænsen nås. Nedlukning angives i sekunder fra 0 til 300. **0 betyder straks**, uden nedtælling. Standardværdien er fortsat 60 sekunder. Ved en positiv tid kan en voksen bruge **Annullér med PIN**, som kræver en ny PIN-godkendelse, også hvis indstillingerne allerede er låst op. Lukning eller genstart af appen nulstiller ikke en igangværende nedtælling.
 
 Programmet anmoder om almindelig Windows-nedlukning og tvinger ikke åbne programmer til at lukke. Windows eller apps med ugemt arbejde kan derfor blokere nedlukningen. Efter en gennemført anmodning begynder optællingen forfra. En fejl fra Windows vises og gentages ikke automatisk. En voksen kan nulstille tæller eller fejl med PIN. Pause stopper ny optælling, men annullerer ikke en allerede udløst nedtælling.
 

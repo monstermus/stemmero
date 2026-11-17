@@ -111,6 +111,40 @@ class WarningPolicyTests(unittest.TestCase):
         self.assertIsNone(policy.status.pending_action)
         self.assertEqual(WarningPolicy(self.path, clock=self.clock).status.count, 0)
 
+    def test_zero_seconds_requests_shutdown_immediately_and_only_once(self):
+        self.policy.configure(replace(self.config, count=1, action='shutdown', countdown_seconds=0))
+        status = self.at(1000, 2)
+        self.assertEqual(status.remaining_seconds, 0)
+        self.assertEqual(status.due_at, 1000)
+        self.executor.shutdown.assert_not_called()
+        self.policy.tick()
+        self.policy.tick()
+        self.executor.shutdown.assert_called_once_with()
+
+    def test_zero_seconds_survives_restart_without_adding_a_delay(self):
+        self.policy.configure(replace(self.config, count=1, action='shutdown', countdown_seconds=0))
+        self.at(1000, 1)
+        restarted = WarningPolicy(self.path, clock=self.clock, executor=self.executor)
+        self.assertEqual(restarted.config.countdown_seconds, 0)
+        restarted.tick()
+        self.executor.shutdown.assert_called_once_with()
+
+    def test_short_delays_use_seconds_without_a_minimum_wait(self):
+        for seconds in (1, 2, 4):
+            with self.subTest(seconds=seconds):
+                self.clock.return_value = 1000
+                executor = Mock()
+                policy = WarningPolicy(self.path.parent / f'{seconds}.json',
+                                       replace(self.config, count=1, action='shutdown', countdown_seconds=seconds),
+                                       self.clock, executor)
+                policy.observe(2)
+                self.clock.return_value = 1000 + seconds - 0.1
+                policy.tick()
+                executor.shutdown.assert_not_called()
+                self.clock.return_value = 1000 + seconds
+                policy.tick()
+                executor.shutdown.assert_called_once_with()
+
     def test_history_and_episode_survive_restart(self):
         self.at(1000, 1)
         self.clock.return_value = 1001
@@ -290,7 +324,7 @@ class WarningPolicyTests(unittest.TestCase):
 
     def test_invalid_configuration_is_rejected(self):
         invalid = [dict(count=0), dict(count=True), dict(count=1001), dict(action='run'),
-                   dict(enabled='yes'), dict(countdown_seconds=0), dict(mode='each'),
+                   dict(enabled='yes'), dict(countdown_seconds=-1), dict(mode='each'),
                    dict(quiet_seconds=float('nan'))]
         for values in invalid:
             with self.subTest(values=values), self.assertRaises(ValueError):

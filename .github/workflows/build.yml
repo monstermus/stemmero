@@ -93,7 +93,7 @@ jobs:
 
           Windows-mikrofon vælges automatisk. Indstillinger kræver en forældre-PIN. Opret PIN ved første opsætning, og gem gendannelseskoden privat.
 
-          Gentagne advarsler kan udløse skærmlås eller en nedlukningsanmodning. Funktionen er slået fra som standard. En voksen vælger antal, tidsrum og handling. Nedlukning har en synlig nedtælling, som kan annulleres med en ny PIN-godkendelse.
+          Gentagne advarsler kan udløse skærmlås eller en nedlukningsanmodning. Funktionen er slået fra som standard. En voksen vælger antal, tidsrum og handling. Nedlukning angives i sekunder, hvor 0 betyder straks. Ved en positiv tid kan nedtællingen annulleres med en ny PIN-godkendelse.
 
           Lukknappen skjuler appen, mens overvågningen fortsætter. Supervisor og en separat minutkontrol genstarter afsluttede processer.
 

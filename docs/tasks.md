@@ -77,7 +77,7 @@ Krav:
 - Antal, tidsrum og handling kan konfigureres. Startværdierne er 5 advarsler på 10 minutter og skærmlås.
 - Tællereglen er ét sammenhængende udbrud pr. advarsel. Farveskift og gentagne lydafspilninger tæller ikke ekstra. En voksen kan vælge indstillingerne i programmet.
 - Historik og en igangværende nedtælling overlever genstart.
-- Nedlukning har som standard en synlig nedtælling på 60 sekunder. Annullering kræver en frisk PIN-godkendelse. En voksen kan vælge indstillingerne i programmet.
+- Nedlukning angives i sekunder fra 0 til 300. 0 betyder straks uden nedtælling. Standardværdien er 60 sekunder. Ved en positiv tid kræver annullering en frisk PIN-godkendelse.
 - Nedlukning må ikke bruge tvungen lukning af åbne programmer.
 - Test, lydafprøvning, pause og manglende mikrofon tæller ikke som advarsler.
 - Ingen tests må faktisk låse eller slukke udviklingsmaskinen eller CI-maskinen.

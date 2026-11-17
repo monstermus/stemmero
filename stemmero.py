@@ -29,7 +29,7 @@ from parental_ui import ParentControls
 from warning_policy import PolicyConfig, WarningPolicy, WindowsActions
 
 APP_NAME = "Stemmero"
-APP_VERSION = "1.2.0"
+APP_VERSION = "1.2.1"
 POLICY_ACTION_LABELS = {"lock": "Lås skærmen", "shutdown": "Sluk computeren"}
 POLICY_MODE_LABELS = {"all": "Alle farver", "orange_red": "Kun orange og rød"}
 CONFIG_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), APP_NAME)
@@ -107,7 +107,7 @@ def load_config():
             cfg[key] = DEFAULTS[key]
     cfg["policy_count"] = max(1, min(1000, cfg["policy_count"]))
     cfg["policy_minutes"] = max(1, min(1440, cfg["policy_minutes"]))
-    cfg["policy_countdown"] = max(30, min(300, cfg["policy_countdown"]))
+    cfg["policy_countdown"] = max(0, min(300, cfg["policy_countdown"]))
     return cfg
 
 
@@ -665,15 +665,15 @@ class App:
                         variable=self.policy_vars['policy_enabled']).grid(row=0, column=0, columnspan=2, sticky='w', pady=8)
         for row, (key, label, maximum) in enumerate((('policy_count', 'Antal advarsler', 1000),
                                                     ('policy_minutes', 'Inden for minutter', 1440),
-                                                    ('policy_countdown', 'Nedtælling før nedlukning i sekunder', 300)), start=1):
+                                                    ('policy_countdown', 'Nedlukning efter sekunder, 0 = straks', 300)), start=1):
             ttk.Label(panel, text=label).grid(row=row, column=0, sticky='w', padx=(0, 16), pady=6)
-            minimum = 30 if key == 'policy_countdown' else 1
+            minimum = 0 if key == 'policy_countdown' else 1
             ttk.Spinbox(panel, from_=minimum, to=maximum, textvariable=self.policy_vars[key], width=8).grid(row=row, column=1, sticky='w')
         for row, (key, label, values) in enumerate((('policy_action', 'Handling', tuple(POLICY_ACTION_LABELS.values())),
                                                    ('policy_mode', 'Advarsler der tælles', tuple(POLICY_MODE_LABELS.values()))), start=4):
             ttk.Label(panel, text=label).grid(row=row, column=0, sticky='w', pady=6)
             ttk.Combobox(panel, textvariable=self.policy_vars[key], values=values, state='readonly', width=18).grid(row=row, column=1, sticky='w')
-        ttk.Label(panel, text='Skærmlås sker straks ved grænsen. Nedlukning har en synlig nedtælling, som en voksen kan annullere med PIN.',
+        ttk.Label(panel, text='0 sekunder betyder nedlukning straks uden nedtælling. Ved en positiv tid kan en voksen annullere nedtællingen med PIN.',
                   wraplength=620).grid(row=6, column=0, columnspan=2, sticky='w', pady=(8, 0))
         ttk.Label(panel, text='Et sammenhængende udbrud tæller én gang. Tælleren og en nedtælling bevares ved genstart. Nedlukning tvinger ikke åbne programmer til at lukke.',
                   wraplength=620).grid(row=7, column=0, columnspan=2, sticky='w', pady=8)
@@ -700,8 +700,8 @@ class App:
                     labels = POLICY_ACTION_LABELS if key == 'policy_action' else POLICY_MODE_LABELS
                     value = {label: code for code, label in labels.items()}[value]
                 self.cfg[key] = value if key in ('policy_enabled', 'policy_action', 'policy_mode') else int(value)
-            if not 30 <= self.cfg['policy_countdown'] <= 300:
-                raise ValueError('Nedtællingen skal være 30 til 300 sekunder.')
+            if not 0 <= self.cfg['policy_countdown'] <= 300:
+                raise ValueError('Angiv 0 til 300 sekunder. 0 betyder straks.')
             config = self._policy_config()
             self.policy.configure(config)
             self.policy.executor = WindowsActions() if self.pin_store.configured and not self.pin_store.damaged else None
