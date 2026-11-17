@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.venv/
+build/
+dist/
+*.spec
+Stemmero-Setup.exe
+SHA256SUMS.txt
+smoke-test.json

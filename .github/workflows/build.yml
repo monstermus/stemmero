@@ -1,0 +1,99 @@
+name: Byg installer
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+          architecture: x64
+          cache: pip
+      - name: Installer buildpakker
+        run: python -m pip install -r requirements-build.txt
+      - name: Test lydlogik og indstillinger
+        run: python -m unittest discover -s tests -v
+      - name: Kontrollér versionsnummer
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          $version = python -c 'import stemmero; print(stemmero.APP_VERSION)'
+          if ($env:GITHUB_REF_NAME -ne "v$version") { throw 'Tag og appversion er forskellige' }
+      - name: Byg Stemmero.exe
+        run: python -m PyInstaller --clean --noconfirm --noconsole --onefile --name Stemmero --add-data "LICENSE;." --collect-all sounddevice stemmero.py
+      - name: Test den pakkede app
+        run: |
+          $app = Start-Process -FilePath .\dist\Stemmero.exe -ArgumentList '--smoke-test' -PassThru
+          if (-not $app.WaitForExit(60000)) { $app.Kill(); throw 'Appen svarede ikke' }
+          if ($app.ExitCode -ne 0) { throw "Appen fejlede: $($app.ExitCode)" }
+          $result = Get-Content smoke-test.json -Raw | ConvertFrom-Json
+          if (-not $result.ok) { throw 'Appkontrollen fejlede' }
+          Get-Content smoke-test.json
+      - name: Byg Stemmero-Setup.exe
+        run: |
+          $makensis = "${env:ProgramFiles(x86)}\NSIS\makensis.exe"
+          if (-not (Test-Path $makensis)) {
+            choco install nsis -y --no-progress
+            if ($LASTEXITCODE -ne 0) { throw 'NSIS kunne ikke installeres' }
+          }
+          & $makensis installer.nsi
+          if ($LASTEXITCODE -ne 0) { throw 'Installeren kunne ikke bygges' }
+      - name: Test installation og afinstallation
+        run: ./tests/windows-install.ps1
+      - name: Lav SHA-256-kontrolsummer
+        run: |
+          $hash = (Get-FileHash Stemmero-Setup.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  Stemmero-Setup.exe" | Set-Content SHA256SUMS.txt -Encoding ascii
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: Stemmero-Windows-x64
+          path: |
+            Stemmero-Setup.exe
+            SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - name: Udgiv installer og kontrolsummer
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          gh run download "$GITHUB_RUN_ID" --name Stemmero-Windows-x64 --dir release
+          cat > release-notes.md <<'NOTES'
+          Hent **Stemmero-Setup.exe** nedenfor og kør den på Windows 10 eller 11 med en x64-processor. Python og administratorrettigheder er ikke nødvendige.
+
+          Programmet viser en advarsel, når mikrofonens niveau er for højt. Lyd behandles lokalt. Der gemmes og sendes ingen lydoptagelser.
+
+          Installeren starter programmet med Windows. Afinstallér under Indstillinger > Apps. Indstillingerne bevares i %APPDATA%\Stemmero.
+
+          Installeren er ikke kodesigneret, så Windows kan vise en SmartScreen-advarsel. Banneret kræver, at spillet kører i et vindue eller borderless.
+
+          Automatiske tests kontrollerer lydlogik, den pakkede app og installation/afinstallation. Et fysisk headset og spil er endnu ikke afprøvet.
+
+          MIT-licens. Alle må hente, bruge, ændre og dele programmet.
+          NOTES
+          gh release create "$RELEASE_TAG" release/Stemmero-Setup.exe release/SHA256SUMS.txt --verify-tag --draft --title "Stemmero $RELEASE_TAG" --notes-file release-notes.md
+          gh release edit "$RELEASE_TAG" --draft=false --latest
