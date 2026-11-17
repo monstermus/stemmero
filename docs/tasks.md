@@ -4,7 +4,7 @@ Opgaverne følger brugerens fem punkter. Root samler ændringerne og udgiver fø
 
 ## 1. Danske advarsler og egne lydfiler
 
-[GitHub-opgave 1](https://github.com/monstermus/stemmero/issues/1). Implementeret af subagent og integreret af root. Afventer samlet Windows-kontrol.
+[GitHub-opgave 1](https://github.com/monstermus/stemmero/issues/1). Implementeret af subagent og integreret af root. Testresultat og release står i GitHub-opgavens kommentarer.
 
 Programmet skal sige en dansk advarsel ved gul, orange og rød grænse. En voksen skal kunne vælge en egen WAV-fil pr. niveau, høre den, stoppe den og gendanne standardstemmen.
 
@@ -19,7 +19,7 @@ Godkendelse kræver tests af alle niveauer, filvalg, ugyldige filer, gendannelse
 
 ## 2. Genstart efter lukning
 
-[GitHub-opgave 2](https://github.com/monstermus/stemmero/issues/2). Implementeret af subagent og integreret af root. Afventer samlet Windows-kontrol.
+[GitHub-opgave 2](https://github.com/monstermus/stemmero/issues/2). Implementeret af subagent og integreret af root. Testresultat og release står i GitHub-opgavens kommentarer.
 
 Overvågningen skal fortsætte, når vinduet lukkes, og programmet skal vende tilbage efter processtop eller nedbrud.
 
@@ -35,7 +35,7 @@ Godkendelse kræver reelle Windows-tests af processtop, ny proces-id, stop af he
 
 ## 3. Automatisk valg af mikrofon
 
-[GitHub-opgave 3](https://github.com/monstermus/stemmero/issues/3). Implementeret af subagent og integreret af root. Afventer samlet Windows-kontrol.
+[GitHub-opgave 3](https://github.com/monstermus/stemmero/issues/3). Implementeret af subagent og integreret af root. Testresultat og release står i GitHub-opgavens kommentarer.
 
 Programmet skal begynde at lytte uden manuelt mikrofonvalg og følge Windows' standardinput.
 
@@ -51,7 +51,7 @@ Godkendelse kræver deterministiske tests af valg, ingen enheder, standardskift 
 
 ## 4. PIN-beskyttede indstillinger
 
-[GitHub-opgave 4](https://github.com/monstermus/stemmero/issues/4). Implementeret af subagent og integreret af root. Afventer samlet Windows-kontrol.
+[GitHub-opgave 4](https://github.com/monstermus/stemmero/issues/4). Implementeret af subagent og integreret af root. Testresultat og release står i GitHub-opgavens kommentarer.
 
 Barnet skal kunne se programmets status uden at kunne ændre indstillingerne. En voksen vælger PIN ved første opsætning.
 
@@ -61,23 +61,23 @@ Krav:
 - PIN har 4 til 12 cifre og gemmes som saltet afledning. Klartekst-PIN må ikke stå i filer eller logs.
 - Gentagne forkerte PIN-forsøg giver ventetid, som overlever genstart.
 - Skift af PIN kræver eksisterende PIN. En beskadiget PIN-fil må ikke åbne indstillingerne.
-- En separat gendannelseskode er foreslået og afventer brugerens præference.
+- En separat gendannelseskode vises ved opsætning. Den roteres efter brug og gemmes kun som hash.
 - PIN beskytter programmets brugerflade. En Windows-administrator eller en bruger med direkte skriveadgang til programmets data kan omgå denne beskyttelse.
 
 Godkendelse kræver tests af låsning ved start, alle ændringsveje, forkert PIN, ventetid, PIN-skift, korrupt fil og gendannelse med en separat kode.
 
 ## 5. Låsning eller nedlukning efter gentagne advarsler
 
-[GitHub-opgave 5](https://github.com/monstermus/stemmero/issues/5). Implementeret af subagent og integreret af root. Afventer samlet Windows-kontrol.
+[GitHub-opgave 5](https://github.com/monstermus/stemmero/issues/5). Implementeret af subagent og integreret af root. Testresultat og release står i GitHub-opgavens kommentarer.
 
 En voksen skal kunne vælge et antal advarsler i et tidsrum og få programmet til at låse Windows eller anmode om nedlukning, når grænsen nås.
 
 Krav:
 - Funktionen er slået fra, indtil en voksen aktiverer den med PIN.
-- Antal, tidsrum og handling kan konfigureres. Foreslåede startværdier er 5 advarsler på 10 minutter og skærmlås.
-- Foreslået tælleregel er ét sammenhængende udbrud pr. advarsel. Farveskift og gentagne lydafspilninger tæller ikke ekstra. Det er den anvendte standard, indtil brugeren vælger andet.
+- Antal, tidsrum og handling kan konfigureres. Startværdierne er 5 advarsler på 10 minutter og skærmlås.
+- Tællereglen er ét sammenhængende udbrud pr. advarsel. Farveskift og gentagne lydafspilninger tæller ikke ekstra. En voksen kan vælge indstillingerne i programmet.
 - Historik og en igangværende nedtælling overlever genstart.
-- Nedlukning har en foreslået synlig nedtælling på 60 sekunder. Annullering kræver en frisk PIN-godkendelse. Det er den anvendte standard, indtil brugeren vælger andet.
+- Nedlukning har som standard en synlig nedtælling på 60 sekunder. Annullering kræver en frisk PIN-godkendelse. En voksen kan vælge indstillingerne i programmet.
 - Nedlukning må ikke bruge tvungen lukning af åbne programmer.
 - Test, lydafprøvning, pause og manglende mikrofon tæller ikke som advarsler.
 - Ingen tests må faktisk låse eller slukke udviklingsmaskinen eller CI-maskinen.
