@@ -14,7 +14,7 @@ function Run-Installer([string]$Path, [string[]]$Arguments) {
 
 try {
     Run-Installer (Join-Path $PWD 'Stemmero-Setup.exe') @('/S')
-    foreach ($name in @('Stemmero.exe', 'task.ps1', 'LICENSE', 'Afinstaller.exe')) {
+    foreach ($name in @('Stemmero.exe', 'task.ps1', 'LICENSE', 'THIRD-PARTY-LICENSES.txt', 'Afinstaller.exe')) {
         if (-not (Test-Path (Join-Path $installDir $name))) { throw "Mangler efter installation: $name" }
     }
     if (-not (Test-Path $uninstallKey)) { throw 'Appen mangler i Windows Apps' }

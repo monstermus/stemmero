@@ -1,9 +1,8 @@
 """
-Stemmero. advarer når du taler for højt i headsettet.
+Stemmero advarer, når du taler for højt i headsettet.
 
-Lytter til mikrofonen, og når du taler for højt (i længere tid end et kort
-udbrud), afspilles en lyd og der vises en advarsel øverst på skærmen –
-gul, orange eller rød efter hvor højt der tales.
+Programmet måler mikrofonens lydniveau og viser en gul, orange eller rød
+advarsel, hvis du taler for højt i længere tid end reaktionstiden.
 
 Kun Windows.  Kræver:  pip install sounddevice numpy
 """

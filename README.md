@@ -57,3 +57,5 @@ For en ny udgivelse opdaterer vedligeholderen versionsnummeret i `stemmero.py` o
 ## Licens
 
 [MIT](LICENSE). Alle må hente, bruge, ændre og dele programmet, også kommercielt. Bevar licensens ophavsretsmeddelelse. Programmet bygger på det indsendte Stemmevagt-projekt af Daniel Prehn.
+
+Installeren medtager bibliotekernes licenstekster i `THIRD-PARTY-LICENSES.txt` i programmappen.
