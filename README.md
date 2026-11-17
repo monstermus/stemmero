@@ -8,8 +8,9 @@ Stemmero advarer dig, når du taler for højt i headsettet under spil. Et gult, 
 
 1. Hent **Stemmero-Setup.exe** via linket ovenfor.
 2. Kør filen og følg installeren. Du behøver hverken Python, en GitHub-konto eller administratorrettigheder.
-3. Åbn **Stemmero** fra Start-menuen, vælg mikrofonen, og tal normalt. Sæt den gule grænse lidt over dit normale niveau.
-4. Brug **Afspil** ved hvert lydniveau og **Test bannere** til visningen. Brug et spil i vindue eller borderless.
+3. Stemmero vælger automatisk Windows' standardmikrofon. En voksen åbner programmet fra Start-menuen og vælger **Opret PIN**. Gem gendannelseskoden privat.
+4. Lås indstillingerne op, tal normalt, og sæt den gule grænse lidt over dit normale niveau.
+5. Brug **Afspil** ved hvert lydniveau og **Test bannere** til visningen. Lås indstillingerne igen. Brug et spil i vindue eller borderless.
 
 Kræver Windows 10 eller 11 med en x64-processor. Installeren er ikke kodesigneret, så Windows kan vise en SmartScreen-advarsel. Hent kun installeren fra dette repos Releases. Hver udgivelse har en SHA-256-kontrolsum i `SHA256SUMS.txt`.
 
@@ -39,9 +40,33 @@ Egne filer skal være ukomprimeret WAV med 8- eller 16-bit PCM-lyd, mono eller s
 
 Advarsler afspilles uden overlap. En højere advarsel kan afbryde en lavere, og et langt klip starter ikke forfra, mens det spiller. **Afspil lyd** slår de automatiske lyde fra. **Test bannere** viser bannerne uden lyd.
 
-Stemmero starter minimeret ved login. Windows Opgavestyring kontrollerer hvert minut, om programmet stadig kører, og genstarter det, hvis det lukkes. Fjern markeringen **Aktiv**, hvis du vil holde pause. Åbn indstillingerne igen fra Start-menuen. Hvis headsettet afbrydes, forsøger programmet at finde en mikrofon igen.
+Stemmero starter minimeret ved login. Lukknappen skjuler vinduet og låser indstillingerne, mens overvågningen fortsætter. Hvis appen afsluttes eller crasher, forsøger en supervisor at starte den igen efter to sekunder. En separat minutkontrol kan genstarte hele procestræet. Åbn vinduet igen fra Start-menuen. En voksen kan holde pause ved at låse op med PIN og fjerne markeringen **Aktiv**.
 
 Lyd behandles i hukommelsen på din computer. Programmet gemmer eller sender ingen lydoptagelser og bruger ingen netværkstjenester. Det måler mikrofonens signalniveau i dBFS. Det genkender ikke stemmer og måler ikke lydtryk i rummet. Baggrundslyde kan derfor også udløse en advarsel.
+
+## Automatisk mikrofon
+
+**Vælg automatisk** er slået til som standard. Programmet følger Windows' standardinput. Hvis det ikke findes, prøver det et headset og derefter et andet gyldigt input. Et enhedstjek opdager standardskift og frakobling uden løbende at afbryde en rask lydstrøm. Mangler alle mikrofoner, viser programmet en besked og forsøger igen.
+
+En voksen kan slå automatisk valg fra og vælge en bestemt mikrofon. Hvis den mangler midlertidigt, bevarer programmet valget og bruger et midlertidigt input, indtil den valgte mikrofon vender tilbage.
+
+## Forældre-PIN
+
+Indstillingerne er låst ved hver start. PIN beskytter mikrofonvalg, grænser, reaktionstid, pause, lyde og konsekvensregler. Første gang vælger en voksen en PIN på 4 til 12 cifre. Der er ingen standard-PIN. En voksen skal afslutte opsætningen, før barnet overtager computeren.
+
+Programmet gemmer kun saltede PIN-hashes. Fem forkerte forsøg giver 30 sekunders ventetid, også efter genstart. Indstillingerne låser ved minimering, fokus væk fra appen eller to minutters inaktivitet. **Skift PIN** kræver den gamle PIN. **Glemt PIN** bruger den separate gendannelseskode og viser en ny kode efter nulstilling. Gem koden privat. En beskadiget PIN-fil låser indstillingerne frem for at åbne dem.
+
+PIN beskytter brugerfladen. Den stopper ikke en Windows-administrator eller en bruger med direkte skriveadgang til programmets data i at ændre eller fjerne beskyttelsen. Installér og konfigurér programmet, før barnet tager det i brug.
+
+## Gentagne advarsler
+
+Funktionen er slået fra som standard. En voksen kan under **Gentagne advarsler** vælge antal, tidsrum og enten **Lås skærmen** eller **Sluk computeren** og derefter trykke **Gem regel**. Startværdierne er fem advarsler på ti minutter. Du kan tælle alle farver eller kun orange og rød.
+
+Et sammenhængende højt udbrud tæller én gang. Farveskift og gentagen afspilning tæller ikke ekstra. Stemmen skal være under den gule grænse i 1,2 sekunder, før et nyt udbrud kan tælle. Afprøvning af lyd og bannere, pause og manglende mikrofon tæller ikke. Historikken følger et rullende tidsvindue og overlever genstart.
+
+Skærmlås anmodes straks, når grænsen nås. Nedlukning har som standard 60 sekunders synlig nedtælling, der kan indstilles til 30 til 300 sekunder. **Annullér med PIN** kræver en ny PIN-godkendelse, også hvis indstillingerne allerede er låst op. Lukning eller genstart af appen nulstiller ikke en igangværende nedtælling.
+
+Programmet anmoder om almindelig Windows-nedlukning og tvinger ikke åbne programmer til at lukke. Windows eller apps med ugemt arbejde kan derfor blokere nedlukningen. Efter en gennemført anmodning begynder optællingen forfra. En fejl fra Windows vises og gentages ikke automatisk. En voksen kan nulstille tæller eller fejl med PIN. Pause stopper ny optælling, men annullerer ikke en allerede udløst nedtælling.
 
 ## Afinstallation
 
@@ -63,6 +88,10 @@ Kør kun testene med:
 python -m pip install -r requirements.txt
 python -m unittest discover -s tests -v
 ```
+
+## Opgaver
+
+De fem ønskede ændringer og deres acceptkriterier står i [opgavebeskrivelsen](docs/tasks.md) og [GitHub Issues](https://github.com/monstermus/stemmero/issues).
 
 ## Udgivelser
 

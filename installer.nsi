@@ -3,7 +3,7 @@
 
 Unicode true
 !define APPNAME "Stemmero"
-!define VERSION "1.1.0"
+!define VERSION "1.2.0"
 !define UNINSTKEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APPNAME}"
 
 Name "${APPNAME}"
@@ -30,9 +30,15 @@ VIAddVersionKey "ProductVersion" "${VERSION}"
 
 Section "Install"
   SetShellVarContext current
-  ; stop en evt. tidligere udgave
-  nsExec::Exec 'taskkill /F /IM Stemmero.exe'
-  Sleep 800
+  ; Brug det nye stop-script, også når en ældre udgave opgraderes.
+  InitPluginsDir
+  SetOutPath "$PLUGINSDIR"
+  File /oname=task.ps1 "task.ps1"
+  nsExec::ExecToLog 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$PLUGINSDIR\task.ps1" -Mode stop -Exe "$INSTDIR\Stemmero.exe"'
+  Pop $0
+  StrCmp $0 "0" +3
+    MessageBox MB_ICONSTOP|MB_OK "Den tidligere udgave kunne ikke stoppes. Luk Stemmero og prøv igen." /SD IDOK
+    Abort
 
   SetOutPath "$INSTDIR"
   File "dist\Stemmero.exe"
@@ -63,9 +69,11 @@ SectionEnd
 Section "Uninstall"
   SetShellVarContext current
   ; fjern opgaven først, så den ikke genstarter programmet
-  nsExec::ExecToLog 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\task.ps1" -Mode uninstall'
-  nsExec::Exec 'taskkill /F /IM Stemmero.exe'
-  Sleep 800
+  nsExec::ExecToLog 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\task.ps1" -Mode uninstall -Exe "$INSTDIR\Stemmero.exe"'
+  Pop $0
+  StrCmp $0 "0" +3
+    MessageBox MB_ICONSTOP|MB_OK "Stemmero kunne ikke stoppes. Prøv afinstallationen igen." /SD IDOK
+    Abort
 
   Delete "$INSTDIR\Stemmero.exe"
   Delete "$INSTDIR\task.ps1"

@@ -13,6 +13,7 @@ import math
 import os
 import sys
 import threading
+import tempfile
 import time
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
@@ -22,9 +23,15 @@ import numpy as np
 import sounddevice as sd
 
 from warning_audio import WarningAudio, SOUND_KEYS, SPOKEN_MESSAGES, default_sound, import_custom_sound, wav_duration
+from microphone_selection import build_input_devices, choose_input_device, windows_input_signature
+from parental_pin import PinStore
+from parental_ui import ParentControls
+from warning_policy import PolicyConfig, WarningPolicy, WindowsActions
 
 APP_NAME = "Stemmero"
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.2.0"
+POLICY_ACTION_LABELS = {"lock": "Lås skærmen", "shutdown": "Sluk computeren"}
+POLICY_MODE_LABELS = {"all": "Alle farver", "orange_red": "Kun orange og rød"}
 CONFIG_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), APP_NAME)
 CONFIG_PATH = os.path.join(CONFIG_DIR, "config.json")
 
@@ -32,6 +39,7 @@ DB_MIN = -60.0
 
 DEFAULTS = {
     "device_label": None,
+    "device_mode": "auto",
     "yellow": -24.0,
     "orange": -17.0,
     "red": -10.0,
@@ -44,6 +52,12 @@ DEFAULTS = {
     "cooldown_s": 4.0,    # mindste tid mellem lyde på samme niveau
     "position": "Top",
     "active": True,
+    "policy_enabled": False,
+    "policy_count": 5,
+    "policy_minutes": 10,
+    "policy_action": "lock",
+    "policy_mode": "all",
+    "policy_countdown": 60,
 }
 
 # (nøgle, tekst, farve)
@@ -86,27 +100,42 @@ def load_config():
     cfg["cooldown_s"] = max(0.5, min(60.0, cfg["cooldown_s"]))
     if cfg["position"] not in ("Top", "Midt", "Bund"):
         cfg["position"] = DEFAULTS["position"]
+    for key, choices in (("device_mode", ("auto", "manual")),
+                         ("policy_action", ("lock", "shutdown")),
+                         ("policy_mode", ("all", "orange_red"))):
+        if cfg[key] not in choices:
+            cfg[key] = DEFAULTS[key]
+    cfg["policy_count"] = max(1, min(1000, cfg["policy_count"]))
+    cfg["policy_minutes"] = max(1, min(1440, cfg["policy_minutes"]))
+    cfg["policy_countdown"] = max(30, min(300, cfg["policy_countdown"]))
     return cfg
 
 
 def save_config(cfg):
+    temporary = None
     try:
         os.makedirs(CONFIG_DIR, exist_ok=True)
-        with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=CONFIG_DIR, delete=False) as f:
+            temporary = f.name
             json.dump(cfg, f, indent=2, ensure_ascii=False)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temporary, CONFIG_PATH)
+        return True
     except OSError:
-        pass
+        return False
+    finally:
+        if temporary and os.path.exists(temporary):
+            try:
+                os.unlink(temporary)
+            except OSError:
+                pass
 
 
 # ---------------------------------------------------------------- lyd ind
 def input_devices():
     """Liste af (index, label) for alle mikrofoner."""
-    apis = sd.query_hostapis()
-    out = []
-    for i, d in enumerate(sd.query_devices()):
-        if d["max_input_channels"] > 0:
-            out.append((i, f'{d["name"]}  [{apis[d["hostapi"]]["name"]}]'))
-    return out
+    return build_input_devices(sd.query_devices(), sd.query_hostapis())
 
 
 class MicListener:
@@ -135,14 +164,23 @@ class MicListener:
 
     def stop(self):
         if self.stream is not None:
+            stream, self.stream = self.stream, None
             try:
-                self.stream.stop()
-                self.stream.close()
+                stream.stop()
             except Exception:
                 pass
-            self.stream = None
+            try:
+                stream.close()
+            except Exception:
+                pass
         with self.lock:
             self.blocks.clear()
+
+    def running(self):
+        try:
+            return self.stream is not None and bool(self.stream.active)
+        except (sd.PortAudioError, OSError):
+            return False
 
     def level_db(self, window_ms):
         """Gennemsnitligt niveau (dBFS) over de sidste window_ms."""
@@ -264,7 +302,7 @@ class App:
         self.root = tk.Tk()
         self.root.title(APP_NAME)
         self.root.resizable(False, False)
-        self.root.protocol("WM_DELETE_WINDOW", self.quit)
+        self.root.protocol("WM_DELETE_WINDOW", self.hide_settings)
 
         self.mic = MicListener()
         self.audio = WarningAudio()
@@ -275,11 +313,37 @@ class App:
         self.last_at_level = 0.0    # sidst niveauet stadig var nået
         self.last_sound = {}         # niveau -> tidspunkt
         self.test_until = 0.0
+        self.preview_until = 0.0
 
         self.next_retry = 0.0
+        self.next_device_check = 0.0
+        self.last_device_refresh = time.monotonic()
+        self.device_signature = windows_input_signature()
+        self.selected_device = None
+        self.settings_states = {}
+        self.parent_dialog_open = False
+        self.pending_window = None
+        self.pin_store = PinStore(os.path.join(CONFIG_DIR, "parental-pin.json"))
+        self.parents = ParentControls(self.root, self.pin_store, self._unlock_settings, self._lock_settings)
+        self.parents.frame.pack(fill="x", padx=12, pady=(8, 0))
 
         self._build_ui()
+        self._capture_settings_states(self.settings_frame)
+        self._lock_settings()
+        history_path = os.path.join(CONFIG_DIR, "warning-history.json")
+        protected = self.pin_store.configured and not self.pin_store.damaged
+        self.policy = WarningPolicy(history_path, None if os.path.exists(history_path) else self._policy_config(),
+                                    executor=WindowsActions() if protected else None)
+        saved_rule = self.policy.config
+        self.cfg.update(policy_enabled=saved_rule.enabled, policy_count=saved_rule.count,
+                        policy_minutes=max(1, saved_rule.window_seconds // 60), policy_action=saved_rule.action,
+                        policy_mode=saved_rule.mode, policy_countdown=saved_rule.countdown_seconds)
+        self._sync_form_values()
         self._start_selected_device()
+        self.root.bind("<FocusOut>", self._focus_out, add="+")
+        self.root.bind("<Unmap>", self._unmap, add="+")
+        self.root.bind("<KeyPress>", self._touch_settings, add="+")
+        self.root.bind("<ButtonPress>", self._touch_settings, add="+")
         if "--minimized" in sys.argv:
             self.root.iconify()
         self.root.after(self.POLL_MS, self._tick)
@@ -287,8 +351,13 @@ class App:
     # ---------- UI
     def _build_ui(self):
         pad = {"padx": 10, "pady": 4}
-        main = ttk.Frame(self.root, padding=12)
-        main.pack(fill="both", expand=True)
+        outer = ttk.Frame(self.root, padding=12)
+        outer.pack(fill="both", expand=True)
+        self.settings_frame = outer
+        tabs = ttk.Notebook(outer)
+        tabs.pack(fill="both", expand=True)
+        main = ttk.Frame(tabs, padding=8)
+        tabs.add(main, text="Mikrofon og grænser")
 
         ttk.Label(main, text="Mikrofon:").grid(row=0, column=0, sticky="w", **pad)
         try:
@@ -297,11 +366,16 @@ class App:
             self.devices = []
         labels = [lbl for _, lbl in self.devices]
         self.device_var = tk.StringVar(value=self._pick_default_device(labels))
-        cb = ttk.Combobox(main, textvariable=self.device_var, values=labels,
-                          state="readonly", width=58)
+        mic_line = ttk.Frame(main)
+        mic_line.grid(row=0, column=1, columnspan=3, sticky="we", **pad)
+        cb = ttk.Combobox(mic_line, textvariable=self.device_var, values=labels,
+                          state="readonly", width=44)
         self.device_combo = cb
-        cb.grid(row=0, column=1, columnspan=3, sticky="we", **pad)
-        cb.bind("<<ComboboxSelected>>", lambda e: self._start_selected_device())
+        cb.pack(side="left")
+        cb.bind("<<ComboboxSelected>>", self._manual_device_selected)
+        self.auto_device_var = tk.BooleanVar(value=self.cfg["device_mode"] == "auto")
+        ttk.Checkbutton(mic_line, text="Vælg automatisk", variable=self.auto_device_var,
+                        command=self._change_device_mode).pack(side="left", padx=(8, 0))
 
         ttk.Label(main, text="Niveau nu:").grid(row=1, column=0, sticky="w", **pad)
         self.meter = tk.Canvas(main, width=440, height=30, bg="#222222",
@@ -346,9 +420,11 @@ class App:
                            textvariable=self.hold_var,
                            command=lambda: self._set("hold_ms", self.hold_var.get()))
         hold.pack(side="left")
+        hold.bind("<FocusOut>", self._apply_hold)
+        hold.bind("<Return>", self._apply_hold)
 
-        sounds = ttk.LabelFrame(main, text="Advarselslyde", padding=8)
-        sounds.grid(row=6, column=0, columnspan=4, sticky="we", pady=(12, 0))
+        sounds = ttk.Frame(tabs, padding=12)
+        tabs.add(sounds, text="Advarselslyde")
         sounds.columnconfigure(1, weight=1)
         self.sound_labels = {}
         self.sound_reset_buttons = {}
@@ -368,30 +444,38 @@ class App:
         self.audio_note = tk.StringVar(value="Dansk tale følger med. Egne lyde skal være WAV, højst 30 sekunder og 10 MB.")
         ttk.Label(sounds, textvariable=self.audio_note, wraplength=650).grid(
             row=3, column=0, columnspan=5, sticky="w", pady=(8, 0))
-        ttk.Button(sounds, text="Stop lyd", command=self.audio.stop).grid(
+        ttk.Button(sounds, text="Stop lyd", command=self._stop_preview).grid(
             row=4, column=0, columnspan=2, sticky="w", pady=(8, 0))
 
         btns = ttk.Frame(main)
         btns.grid(row=7, column=0, columnspan=4, sticky="we", pady=(10, 0))
         ttk.Button(btns, text="Test bannere", command=self._test).pack(side="left", padx=6)
-        self.status = ttk.Label(btns, text="", foreground="#666666")
+        self.status = ttk.Label(btns, text="", foreground="#555555", wraplength=500)
         self.status.pack(side="left", padx=12)
 
         ttk.Label(main, foreground="#666666", text=(
             "Tip: tal normalt og se hvor bjælken ligger. Sæt gul lidt over det. "
             "Spil i 'borderless/vindue', ikke eksklusiv fuldskærm."
         ), wraplength=650).grid(row=8, column=0, columnspan=4, sticky="w", pady=(10, 0))
+        self._build_policy_ui(tabs)
 
     def _refresh_sound_label(self, key):
         custom = self.cfg[f"sound_{key}"]
         self.sound_labels[key].config(text="Egen WAV-fil" if custom else SPOKEN_MESSAGES[key])
-        self.sound_reset_buttons[key].config(state="normal" if custom else "disabled")
+        editable = self._parent_session_open()
+        self.sound_reset_buttons[key].config(state="normal" if custom and editable else "disabled")
 
     def _choose_sound(self, key):
-        selected = filedialog.askopenfilename(
-            parent=self.root, title=f"Vælg lyd til {dict(zip(SOUND_KEYS, ('gul', 'orange', 'rød')))[key]}",
-            filetypes=[("WAV-lydfiler", "*.wav"), ("Alle filer", "*.*")])
-        if not selected:
+        if not self._require_parent():
+            return
+        self.parent_dialog_open = True
+        try:
+            selected = filedialog.askopenfilename(
+                parent=self.root, title=f"Vælg lyd til {dict(zip(SOUND_KEYS, ('gul', 'orange', 'rød')))[key]}",
+                filetypes=[("WAV-lydfiler", "*.wav"), ("Alle filer", "*.*")])
+        finally:
+            self.parent_dialog_open = False
+        if not selected or not self._require_parent():
             return
         self.audio.stop()
         try:
@@ -405,70 +489,284 @@ class App:
         self.audio_note.set(f"Valgt: {os.path.basename(selected)}. En kopi er gemt med dine indstillinger.")
 
     def _reset_sound(self, key):
+        if not self._require_parent():
+            return
         self.audio.stop()
         self._set(f"sound_{key}", "")
         self._refresh_sound_label(key)
         self.audio_note.set("Den danske standardstemme er gendannet.")
 
     def _preview_sound(self, key):
+        if not self._require_parent():
+            return
         self.audio.play(key, self.cfg[f"sound_{key}"], preview=True)
+        until = getattr(self.audio, "until", 0.0)
+        self.preview_until = max(time.monotonic(), until if type(until) in (int, float) else 0.0) + 0.5
         self.audio_note.set(self.audio.last_error or "Afspiller den valgte lyd. Brug Stop lyd for at afbryde.")
 
+    def _stop_preview(self):
+        if self._require_parent():
+            self.audio.stop()
+            self.preview_until = time.monotonic() + 0.5
+
+    def _parent_session_open(self):
+        parents = getattr(self, 'parents', None)
+        return bool(parents and parents.unlocked and time.monotonic() < parents.unlocked_until)
+
+    def _require_parent(self):
+        if self._parent_session_open():
+            return True
+        parents = getattr(self, 'parents', None)
+        if parents is not None and parents.unlocked:
+            parents.lock()
+        return False
+
+    def _capture_settings_states(self, widget):
+        for child in widget.winfo_children():
+            if isinstance(child, (ttk.Button, ttk.Checkbutton, ttk.Combobox, ttk.Spinbox, ttk.Entry, tk.Scale)):
+                self.settings_states[child] = str(child.cget('state'))
+            self._capture_settings_states(child)
+
+    def _sync_form_values(self):
+        for key, var in self.sliders.items():
+            var.set(self.cfg[key])
+        for name, key in (('active_var', 'active'), ('sound_var', 'sound'),
+                          ('pos_var', 'position'), ('hold_var', 'hold_ms')):
+            getattr(self, name).set(self.cfg[key])
+        self.auto_device_var.set(self.cfg['device_mode'] == 'auto')
+        for key, var in self.policy_vars.items():
+            labels = POLICY_ACTION_LABELS if key == 'policy_action' else POLICY_MODE_LABELS if key == 'policy_mode' else {}
+            var.set(labels.get(self.cfg[key], self.cfg[key]))
+
+    def _lock_settings(self):
+        for widget in getattr(self, 'settings_states', {}):
+            widget.configure(state='disabled')
+        if hasattr(self, 'sliders'):
+            self._sync_form_values()
+
+    def _unlock_settings(self):
+        for widget, state in self.settings_states.items():
+            widget.configure(state=state)
+        for key in SOUND_KEYS:
+            self._refresh_sound_label(key)
+        self.device_combo.configure(state='readonly' if self.cfg['device_mode'] == 'manual' else 'disabled')
+
+    def _touch_settings(self, _event=None):
+        if self._parent_session_open():
+            self.parents.unlocked_until = time.monotonic() + 120
+
+    def _focus_out(self, _event=None):
+        self.root.after(150, self._lock_if_unfocused)
+
+    def _lock_if_unfocused(self):
+        if not self.parents.busy and not self.parent_dialog_open and self.root.focus_displayof() is None:
+            self.parents.lock()
+
+    def _unmap(self, event):
+        if event.widget == self.root and self.root.state() in ('iconic', 'withdrawn'):
+            self.parents.lock()
+
+    def hide_settings(self):
+        self.parents.lock()
+        self.root.iconify()
+
     def _pick_default_device(self, labels):
-        saved = self.cfg.get("device_label")
-        if saved in labels:
-            return saved
-        for lbl in labels:
-            if "headset" in lbl.lower():
-                return lbl
         try:
-            default_idx = sd.default.device[0]
-            for i, lbl in self.devices:
-                if i == default_idx:
-                    return lbl
-        except Exception:
-            pass
-        return labels[0] if labels else ""
+            default = sd.default.device[0]
+        except (sd.PortAudioError, IndexError):
+            default = None
+        selected = choose_input_device(self.devices, default, self.cfg.get('device_label'), self.cfg['device_mode'])
+        return selected[1] if selected else ''
+
+    def _manual_device_selected(self, _event=None):
+        if not self._require_parent() or self.cfg['device_mode'] != 'manual':
+            return
+        self._set('device_label', self.device_var.get())
+        self._start_selected_device()
+
+    def _change_device_mode(self):
+        if not self._require_parent():
+            return
+        self._set('device_mode', 'auto' if self.auto_device_var.get() else 'manual')
+        self.device_combo.configure(state='disabled' if self.auto_device_var.get() else 'readonly')
+        self._start_selected_device()
 
     def _reconnect(self):
-        """Headset taget ud/sat i: genindlæs enheder og prøv igen."""
         self.mic.stop()
-        try:
-            sd._terminate()
-            sd._initialize()
-        except Exception:
-            pass
+        self.selected_device = None
+        self.warning_gate = WarningGate()
+        sd._terminate()
+        sd._initialize()
+        self.last_device_refresh = time.monotonic()
         self.devices = input_devices()
-        labels = [lbl for _, lbl in self.devices]
-        self.device_combo.config(values=labels)
-        saved = self.cfg.get("device_label")
-        if saved in labels:
-            self.device_var.set(saved)
-        elif labels and self.device_var.get() not in labels:
-            self.device_var.set(self._pick_default_device(labels))
+        self.device_combo.configure(values=[label for _, label in self.devices])
         self._start_selected_device()
 
     def _start_selected_device(self):
-        label = self.device_var.get()
-        idx = next((i for i, lbl in self.devices if lbl == label), None)
-        if idx is None:
-            self.status.config(text="Ingen mikrofon fundet. prøver igen ...")
+        try:
+            default = sd.default.device[0]
+        except (sd.PortAudioError, IndexError):
+            default = None
+        selected = choose_input_device(self.devices, default, self.cfg.get('device_label'), self.cfg['device_mode'])
+        if selected is None:
+            self.mic.stop()
+            self.selected_device = None
+            self.device_var.set('')
+            self.status.configure(text='Ingen mikrofon fundet. Prøver automatisk igen ...')
+            return
+        index, label = selected
+        self.device_var.set(label)
+        if selected == self.selected_device and self.mic.running():
             return
         try:
-            self.mic.start(idx)
-            self.cfg["device_label"] = label
-            save_config(self.cfg)
-            self.status.config(text="Lytter ...")
-        except Exception as e:
-            self.status.config(text=f"Kunne ikke åbne mikrofonen: {e}")
+            self.mic.start(index)
+            self.selected_device = selected
+            prefix = 'Automatisk' if self.cfg['device_mode'] == 'auto' else 'Lytter'
+            self.status.configure(text=f'{prefix}: {label}')
+        except (sd.PortAudioError, OSError) as error:
+            self.selected_device = None
+            self.status.configure(text=f'Kunne ikke åbne mikrofonen: {error}')
+
+    def _check_microphone(self, now):
+        if now < self.next_device_check:
+            return
+        self.next_device_check = now + 2
+        signature = windows_input_signature()
+        changed = signature is not None and signature != self.device_signature
+        if signature is not None:
+            self.device_signature = signature
+        unavailable = not self.mic.running()
+        # En COM-fejl må ikke afbryde en rask lydstrøm ved hvert tjek.
+        if changed or unavailable and now >= self.next_retry:
+            self.next_retry = now + 5
+            try:
+                self._reconnect()
+            except (sd.PortAudioError, OSError) as error:
+                self.status.configure(text=f'Venter på mikrofon ... ({error})')
+
+    def _apply_hold(self, _event=None):
+        if not self._require_parent():
+            return
+        try:
+            value = max(100, min(2000, int(self.hold_var.get())))
+        except (ValueError, tk.TclError):
+            value = self.cfg['hold_ms']
+        self.hold_var.set(value)
+        self._set('hold_ms', value)
+
+    def _build_policy_ui(self, tabs):
+        panel = ttk.Frame(tabs, padding=12)
+        tabs.add(panel, text='Gentagne advarsler')
+        self.policy_vars = {
+            key: (tk.BooleanVar(value=self.cfg[key]) if key == 'policy_enabled' else tk.StringVar(value=(POLICY_ACTION_LABELS if key == 'policy_action' else POLICY_MODE_LABELS if key == 'policy_mode' else {}).get(self.cfg[key], self.cfg[key])))
+            for key in ('policy_enabled', 'policy_count', 'policy_minutes', 'policy_action', 'policy_mode', 'policy_countdown')
+        }
+        ttk.Checkbutton(panel, text='Aktivér konsekvens efter gentagne advarsler',
+                        variable=self.policy_vars['policy_enabled']).grid(row=0, column=0, columnspan=2, sticky='w', pady=8)
+        for row, (key, label, maximum) in enumerate((('policy_count', 'Antal advarsler', 1000),
+                                                    ('policy_minutes', 'Inden for minutter', 1440),
+                                                    ('policy_countdown', 'Nedtælling før nedlukning i sekunder', 300)), start=1):
+            ttk.Label(panel, text=label).grid(row=row, column=0, sticky='w', padx=(0, 16), pady=6)
+            minimum = 30 if key == 'policy_countdown' else 1
+            ttk.Spinbox(panel, from_=minimum, to=maximum, textvariable=self.policy_vars[key], width=8).grid(row=row, column=1, sticky='w')
+        for row, (key, label, values) in enumerate((('policy_action', 'Handling', tuple(POLICY_ACTION_LABELS.values())),
+                                                   ('policy_mode', 'Advarsler der tælles', tuple(POLICY_MODE_LABELS.values()))), start=4):
+            ttk.Label(panel, text=label).grid(row=row, column=0, sticky='w', pady=6)
+            ttk.Combobox(panel, textvariable=self.policy_vars[key], values=values, state='readonly', width=18).grid(row=row, column=1, sticky='w')
+        ttk.Label(panel, text='Skærmlås sker straks ved grænsen. Nedlukning har en synlig nedtælling, som en voksen kan annullere med PIN.',
+                  wraplength=620).grid(row=6, column=0, columnspan=2, sticky='w', pady=(8, 0))
+        ttk.Label(panel, text='Et sammenhængende udbrud tæller én gang. Tælleren og en nedtælling bevares ved genstart. Nedlukning tvinger ikke åbne programmer til at lukke.',
+                  wraplength=620).grid(row=7, column=0, columnspan=2, sticky='w', pady=8)
+        ttk.Button(panel, text='Gem regel', command=self._save_policy).grid(row=8, column=0, sticky='w', pady=8)
+        ttk.Button(panel, text='Nulstil tæller med PIN', command=self._cancel_policy).grid(row=8, column=1, sticky='w')
+        self.policy_note = tk.StringVar(value='Konsekvenser er slået fra, indtil en voksen aktiverer og gemmer reglen.')
+        ttk.Label(panel, textvariable=self.policy_note, wraplength=620).grid(row=9, column=0, columnspan=2, sticky='w', pady=8)
+
+    def _policy_config(self):
+        enabled = self.cfg['policy_enabled'] and self.pin_store.configured and not self.pin_store.damaged
+        return PolicyConfig(enabled=bool(enabled), count=self.cfg['policy_count'],
+                            window_seconds=self.cfg['policy_minutes'] * 60, action=self.cfg['policy_action'],
+                            countdown_seconds=self.cfg['policy_countdown'], mode=self.cfg['policy_mode'],
+                            quiet_seconds=max(0.1, self.cfg['release_ms'] / 1000))
+
+    def _save_policy(self):
+        if not self._require_parent():
+            return
+        old = dict(self.cfg)
+        try:
+            for key, var in self.policy_vars.items():
+                value = var.get()
+                if key in ('policy_action', 'policy_mode'):
+                    labels = POLICY_ACTION_LABELS if key == 'policy_action' else POLICY_MODE_LABELS
+                    value = {label: code for code, label in labels.items()}[value]
+                self.cfg[key] = value if key in ('policy_enabled', 'policy_action', 'policy_mode') else int(value)
+            if not 30 <= self.cfg['policy_countdown'] <= 300:
+                raise ValueError('Nedtællingen skal være 30 til 300 sekunder.')
+            config = self._policy_config()
+            self.policy.configure(config)
+            self.policy.executor = WindowsActions() if self.pin_store.configured and not self.pin_store.damaged else None
+            if not save_config(self.cfg):
+                self.policy_note.set('Reglen er gemt, men de øvrige indstillinger kunne ikke gemmes.')
+                return
+        except (ValueError, KeyError, OSError, RuntimeError, tk.TclError) as error:
+            self.cfg = old
+            self.policy_note.set(f'Reglen kunne ikke gemmes: {error}')
+            return
+        self.policy_note.set('Reglen er gemt.')
+
+    def _cancel_policy(self):
+        if self.pending_window is not None:
+            self.pending_window.attributes('-topmost', False)
+        self.root.deiconify()
+        self.root.lift()
+        try:
+            if not self.parents.fresh_auth():
+                return
+            self.policy.cancel()
+            self.policy_note.set('Tælleren og den ventende handling er nulstillet med PIN.')
+        except (OSError, RuntimeError) as error:
+            self.policy_note.set(str(error))
+        finally:
+            if self.pending_window is not None:
+                self.pending_window.attributes('-topmost', True)
+
+    def _show_policy_status(self):
+        status = self.policy.status
+        if status.error:
+            self.policy_note.set(status.error)
+        elif status.pending_action:
+            label = 'Nedlukning' if status.pending_action == 'shutdown' else 'Skærmlås'
+            self.policy_note.set(f'{label} om {status.remaining_seconds} sekunder. Annullering kræver PIN.')
+        elif self.policy.config.enabled:
+            self.policy_note.set(f'{status.count} af {self.policy.config.count} advarsler i de seneste {self.cfg["policy_minutes"]} minutter.')
+        else:
+            self.policy_note.set('Konsekvenser er slået fra.')
+        if status.pending_action and not status.action_failed and status.pending_action == 'shutdown':
+            if self.pending_window is None:
+                self.pending_window = tk.Toplevel(self.root)
+                self.pending_window.title('Stemmero: nedlukning')
+                self.pending_window.attributes('-topmost', True)
+                self.pending_window.protocol('WM_DELETE_WINDOW', lambda: None)
+                self.pending_text = tk.StringVar()
+                ttk.Label(self.pending_window, textvariable=self.pending_text, padding=20, wraplength=420).pack()
+                ttk.Button(self.pending_window, text='Annullér med PIN', command=self._cancel_policy).pack(pady=(0, 20))
+            self.pending_text.set(f'Computeren anmodes om at slukke om {status.remaining_seconds} sekunder.\nEn voksen kan annullere med PIN.')
+        elif self.pending_window is not None:
+            self.pending_window.destroy()
+            self.pending_window = None
 
     def _set(self, key, value):
+        if not self._require_parent():
+            return
         self.cfg[key] = value
         if key in ("sound", "active") and not value:
             self.audio.stop()
-        save_config(self.cfg)
+        if not save_config(self.cfg):
+            self.audio_note.set('Indstillingerne kunne ikke gemmes. Kontrollér adgang til programmets datamappe.')
 
     def _test(self):
+        if not self._require_parent():
+            return
         self.audio.stop()
         self.test_until = time.monotonic() + 3.0
 
@@ -482,28 +780,35 @@ class App:
 
     def _tick(self):
         now = time.monotonic()
-        stream = self.mic.stream
-        if (stream is None or not stream.active) and now >= self.next_retry:
-            self.next_retry = now + 5.0
-            try:
-                self._reconnect()
-            except Exception as e:
-                self.status.config(text=f"Venter på mikrofon ... ({e})")
-        try:
-            hold = int(self.hold_var.get())
-        except (tk.TclError, ValueError):
-            hold = self.cfg["hold_ms"]
-        self.cfg["hold_ms"] = hold
+        self._check_microphone(now)
+        if self.parents.unlocked and now >= self.parents.unlocked_until:
+            self.parents.lock()
+        if now >= getattr(self, 'next_parent_refresh', 0):
+            self.next_parent_refresh = now + 1
+            self.parents.refresh()
+            if self.pin_store.damaged or not self.pin_store.configured:
+                self.policy.executor = None
+        hold = self.cfg['hold_ms']
+        monitoring = self.mic.running() and self.cfg['active']
 
         meter_db = self.mic.level_db(80)
         self._draw_meter(meter_db)
 
-        raw_level = self._classify(meter_db) if self.cfg["active"] else -1
+        raw_level = self._classify(meter_db) if monitoring else -1
         held_level = self.warning_gate.update(raw_level, now, max(100, min(2000, hold)))
+        try:
+            self.policy.observe(held_level, monitoring=monitoring,
+                                test=now < self.test_until or now < getattr(self, 'preview_until', 0), quiet=raw_level < 0)
+            self.policy.tick()
+        except (OSError, RuntimeError) as error:
+            self.policy_note.set(str(error))
+        self._show_policy_status()
 
         if now < self.test_until:
             # gennemløb gul -> orange -> rød på 3 sek.
             level = min(2, int((3.0 - (self.test_until - now)) / 1.0))
+        elif now < getattr(self, 'preview_until', 0):
+            level = -1
         elif self.cfg["active"]:
             level = held_level
         else:
@@ -529,7 +834,7 @@ class App:
     def _alert(self, level, now, force_sound):
         key, text, color = LEVELS[level]
         self.overlay.show(text, color, self.cfg["position"])
-        if not self.cfg["sound"] or now < self.test_until:
+        if not self.cfg["sound"] or now < self.test_until or now < getattr(self, 'preview_until', 0):
             return
         last = self.last_sound.get(level, 0.0)
         if force_sound or now - last >= self.cfg["cooldown_s"]:
@@ -568,7 +873,7 @@ class App:
 _MUTEX = None
 
 
-def already_running():
+def already_running(name="Stemmero"):
     """Sørger for at der kun kører én Stemmero ad gangen."""
     global _MUTEX
     if sys.platform != "win32":
@@ -576,7 +881,7 @@ def already_running():
     k32 = ctypes.WinDLL("kernel32", use_last_error=True)
     k32.CreateMutexW.argtypes = [ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR]
     k32.CreateMutexW.restype = wintypes.HANDLE
-    _MUTEX = k32.CreateMutexW(None, False, "Local\\Stemmero")
+    _MUTEX = k32.CreateMutexW(None, False, f"Local\\{name}")
     if not _MUTEX:
         raise ctypes.WinError(ctypes.get_last_error())
     return ctypes.get_last_error() == 183  # ERROR_ALREADY_EXISTS
@@ -603,6 +908,13 @@ def smoke_test():
 
 
 if __name__ == "__main__":
+    if "--watchdog" in sys.argv:
+        from watchdog import child_command, supervise
+        if already_running("Stemmero-Watchdog"):
+            sys.exit(0)
+        supervise(child_command(sys.executable, os.path.abspath(__file__)),
+                  os.path.join(CONFIG_DIR, "supervisor.stop"))
+        sys.exit(0)
     if "--smoke-test" in sys.argv:
         smoke_test()
         sys.exit(0)

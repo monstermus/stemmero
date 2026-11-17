@@ -25,7 +25,7 @@ jobs:
           cache: pip
       - name: Installer buildpakker
         run: python -m pip install -r requirements-build.txt
-      - name: Test lydlogik og indstillinger
+      - name: Test lyd, PIN, mikrofon og regler
         run: python -m unittest discover -s tests -v
       - name: Kontrollér versionsnummer
         if: startsWith(github.ref, 'refs/tags/')
@@ -90,6 +90,12 @@ jobs:
           Programmet viser en advarsel, når mikrofonens niveau er for højt. Lyd behandles lokalt. Der gemmes og sendes ingen lydoptagelser.
 
           Hvert advarselsniveau har en dansk stemme. Vælg dine egne WAV-filer under Advarselslyde, og brug Afspil til at høre dem. Gendan vælger standardstemmen igen.
+
+          Windows-mikrofon vælges automatisk. Indstillinger kræver en forældre-PIN. Opret PIN ved første opsætning, og gem gendannelseskoden privat.
+
+          Gentagne advarsler kan udløse skærmlås eller en nedlukningsanmodning. Funktionen er slået fra som standard. En voksen vælger antal, tidsrum og handling. Nedlukning har en synlig nedtælling, som kan annulleres med en ny PIN-godkendelse.
+
+          Lukknappen skjuler appen, mens overvågningen fortsætter. Supervisor og en separat minutkontrol genstarter afsluttede processer.
 
           Installeren starter programmet med Windows. Afinstallér under Indstillinger > Apps. Indstillingerne bevares i %APPDATA%\Stemmero.
 

@@ -104,7 +104,7 @@ class WarningAudio:
             except (OSError, ValueError, RuntimeError) as error:
                 self.last_error = f'Lyden kunne ikke afspilles: {error}'
                 continue
-            self.until = now + duration
+            self.until = self.clock() + duration
             self.priority = priority
             if custom_path and path != Path(custom_path):
                 self.last_error = 'Din lyd kunne ikke afspilles. Standardstemmen bruges.'

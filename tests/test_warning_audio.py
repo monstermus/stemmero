@@ -95,6 +95,18 @@ class AudioTests(unittest.TestCase):
         self.assertTrue(self.player.play('yellow'))
         self.assertEqual(self.backend.PlaySound.call_count, 2)
 
+    def test_long_clip_is_not_restarted_before_playback_actually_finishes(self):
+        path = self.wav(seconds=30)
+        # Filkontrol og Windows' opstart af lyden kan tage tid.
+        self.backend.PlaySound.side_effect = lambda *_: setattr(self.clock, 'return_value', 101.0)
+        self.assertTrue(self.player.play('red', path))
+        self.backend.PlaySound.side_effect = None
+        self.clock.return_value = 130.5
+        self.assertFalse(self.player.play('red', path))
+        self.assertEqual(self.backend.PlaySound.call_count, 1)
+        self.clock.return_value = 131.1
+        self.assertTrue(self.player.play('red', path))
+
     def test_red_interrupts_yellow_and_lower_levels_wait(self):
         self.player.play('yellow')
         self.assertTrue(self.player.play('red'))

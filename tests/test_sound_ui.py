@@ -3,6 +3,7 @@ import sys
 import tempfile
 import tkinter as tk
 import unittest
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import stemmero
@@ -21,7 +22,8 @@ class SoundSettingsTests(unittest.TestCase):
         self.app.root = self.root
         self.app.cfg = dict(stemmero.DEFAULTS)
         self.app.audio = Mock(last_error='')
-        for target, value in [('save_config', None), ('input_devices', []), ('CONFIG_DIR', self.folder.name)]:
+        self.app.parents = SimpleNamespace(unlocked=True, unlocked_until=float('inf'))
+        for target, value in [('save_config', True), ('input_devices', []), ('CONFIG_DIR', self.folder.name)]:
             context = patch.object(stemmero, target, return_value=value) if target != 'CONFIG_DIR' else patch.object(stemmero, target, value)
             context.start()
             self.addCleanup(context.stop)
