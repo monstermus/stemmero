@@ -43,6 +43,11 @@ class ConfigTests(unittest.TestCase):
                 stemmero.save_config(stemmero.DEFAULTS)
                 self.assertEqual(stemmero.load_config(), stemmero.DEFAULTS)
 
+    def test_custom_sound_selection_is_loaded(self):
+        cfg = self.load(json.dumps({'sound_red': 'C:/Users/test/Stemmero/sounds/red.wav'}))
+        self.assertEqual(cfg['sound_red'], 'C:/Users/test/Stemmero/sounds/red.wav')
+        self.assertEqual(cfg['sound_yellow'], '')
+
 
 class WarningTests(unittest.TestCase):
     def test_brief_shout_does_not_trigger(self):

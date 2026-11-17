@@ -33,7 +33,7 @@ jobs:
           $version = python -c 'import stemmero; print(stemmero.APP_VERSION)'
           if ($env:GITHUB_REF_NAME -ne "v$version") { throw 'Tag og appversion er forskellige' }
       - name: Byg Stemmero.exe
-        run: python -m PyInstaller --clean --noconfirm --noconsole --onefile --name Stemmero --add-data "LICENSE;." --collect-all sounddevice stemmero.py
+        run: python -m PyInstaller --clean --noconfirm --noconsole --onefile --name Stemmero --add-data "LICENSE;." --add-data "assets;assets" --collect-all sounddevice stemmero.py
       - name: Test den pakkede app
         run: |
           $app = Start-Process -FilePath .\dist\Stemmero.exe -ArgumentList '--smoke-test' -PassThru
@@ -88,6 +88,8 @@ jobs:
           Hent **Stemmero-Setup.exe** nedenfor og kør den på Windows 10 eller 11 med en x64-processor. Python og administratorrettigheder er ikke nødvendige.
 
           Programmet viser en advarsel, når mikrofonens niveau er for højt. Lyd behandles lokalt. Der gemmes og sendes ingen lydoptagelser.
+
+          Hvert advarselsniveau har en dansk stemme. Vælg dine egne WAV-filer under Advarselslyde, og brug Afspil til at høre dem. Gendan vælger standardstemmen igen.
 
           Installeren starter programmet med Windows. Afinstallér under Indstillinger > Apps. Indstillingerne bevares i %APPDATA%\Stemmero.
 

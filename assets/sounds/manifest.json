@@ -1,0 +1,27 @@
+{
+  "generator": "Piper",
+  "model": "da_DK-talesyntese-medium",
+  "model_url": "https://huggingface.co/rhasspy/piper-voices/tree/main/da/da_DK/talesyntese/medium",
+  "model_sha256": "b9271efd25f7b8494bbd28d48dd675c8c119daa284f3ee488008935f515f1241",
+  "postprocess": "FFmpeg loudnorm I=-20 TP=-3 LRA=7, mono 22050 Hz PCM 16-bit",
+  "sounds": {
+    "yellow": {
+      "text": "Du taler lidt for højt.",
+      "file": "yellow.wav",
+      "sha256": "439108fed00529de4478525bf5d57c8796031c99e86692e9c74c4a3ff828539c",
+      "seconds": 1.324
+    },
+    "orange": {
+      "text": "Du taler for højt. Skru ned for stemmen.",
+      "file": "orange.wav",
+      "sha256": "464aeb884ec152cc890b39399b0f6afa962099a7dfcf1c6d782dbbf792671a89",
+      "seconds": 2.603
+    },
+    "red": {
+      "text": "Du taler alt for højt. Tal lavere nu.",
+      "file": "red.wav",
+      "sha256": "628a83bc9c3761d9d578324828da3e5c361b2413bb6d27ee2f56190a17c4bbb6",
+      "seconds": 2.359
+    }
+  }
+}

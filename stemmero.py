@@ -15,19 +15,16 @@ import sys
 import threading
 import time
 import tkinter as tk
-from tkinter import ttk
+from tkinter import ttk, filedialog, messagebox
 from ctypes import wintypes
 
 import numpy as np
 import sounddevice as sd
 
-try:
-    import winsound
-except ImportError:  # gør det muligt at starte (uden lyd) på andre systemer
-    winsound = None
+from warning_audio import WarningAudio, SOUND_KEYS, SPOKEN_MESSAGES, default_sound, import_custom_sound, wav_duration
 
 APP_NAME = "Stemmero"
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.1.0"
 CONFIG_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), APP_NAME)
 CONFIG_PATH = os.path.join(CONFIG_DIR, "config.json")
 
@@ -41,16 +38,19 @@ DEFAULTS = {
     "hold_ms": 350,       # hvor længe der skal tales højt før der advares
     "release_ms": 1200,   # hvor længe advarslen bliver hængende
     "sound": True,
+    "sound_yellow": "",
+    "sound_orange": "",
+    "sound_red": "",
     "cooldown_s": 4.0,    # mindste tid mellem lyde på samme niveau
     "position": "Top",
     "active": True,
 }
 
-# (nøgle, tekst, farve, tone-Hz, tone-ms)
+# (nøgle, tekst, farve)
 LEVELS = [
-    ("yellow", "Lidt højt", "#FFD400", 660, 120),
-    ("orange", "Du taler for højt", "#FF8A00", 880, 180),
-    ("red", "ALT FOR HØJT!", "#FF2A2A", 1100, 320),
+    ("yellow", "Lidt højt", "#FFD400"),
+    ("orange", "Du taler for højt", "#FF8A00"),
+    ("red", "ALT FOR HØJT!", "#FF2A2A"),
 ]
 
 
@@ -236,13 +236,6 @@ class Overlay:
             self.visible = False
 
 
-# ---------------------------------------------------------------- lyd ud
-def beep(freq, ms):
-    if winsound is None:
-        return
-    threading.Thread(target=winsound.Beep, args=(freq, ms), daemon=True).start()
-
-
 # ---------------------------------------------------------------- app
 class WarningGate:
     """Kræv et vedvarende niveau før en advarsel eller en optrapning."""
@@ -274,12 +267,13 @@ class App:
         self.root.protocol("WM_DELETE_WINDOW", self.quit)
 
         self.mic = MicListener()
+        self.audio = WarningAudio()
         self.warning_gate = WarningGate()
         self.overlay = Overlay(self.root)
 
         self.current = -1           # aktuelt advarselsniveau (-1 = ingen)
         self.last_at_level = 0.0    # sidst niveauet stadig var nået
-        self.last_beep = {}         # niveau -> tidspunkt
+        self.last_sound = {}         # niveau -> tidspunkt
         self.test_until = 0.0
 
         self.next_retry = 0.0
@@ -315,7 +309,7 @@ class App:
         self.meter.grid(row=1, column=1, columnspan=3, sticky="w", **pad)
 
         self.sliders = {}
-        for r, (key, text, color, _, _) in enumerate(LEVELS, start=2):
+        for r, (key, text, color) in enumerate(LEVELS, start=2):
             lbl = tk.Label(main, text=f"  {text}  ", bg=color, fg="#111111",
                            font=("Segoe UI", 9, "bold"))
             lbl.grid(row=r, column=0, sticky="w", **pad)
@@ -353,16 +347,72 @@ class App:
                            command=lambda: self._set("hold_ms", self.hold_var.get()))
         hold.pack(side="left")
 
+        sounds = ttk.LabelFrame(main, text="Advarselslyde", padding=8)
+        sounds.grid(row=6, column=0, columnspan=4, sticky="we", pady=(12, 0))
+        sounds.columnconfigure(1, weight=1)
+        self.sound_labels = {}
+        self.sound_reset_buttons = {}
+        for row, (key, name) in enumerate(zip(SOUND_KEYS, ("Gul", "Orange", "Rød"))):
+            ttk.Label(sounds, text=name).grid(row=row, column=0, sticky="w", padx=(0, 12), pady=4)
+            label = ttk.Label(sounds, wraplength=300)
+            label.grid(row=row, column=1, sticky="w", padx=(0, 8), pady=4)
+            self.sound_labels[key] = label
+            ttk.Button(sounds, text="Vælg WAV...", command=lambda k=key: self._choose_sound(k)).grid(
+                row=row, column=2, padx=4, pady=4)
+            ttk.Button(sounds, text="Afspil", command=lambda k=key: self._preview_sound(k)).grid(
+                row=row, column=3, padx=4, pady=4)
+            reset = ttk.Button(sounds, text="Gendan", command=lambda k=key: self._reset_sound(k))
+            reset.grid(row=row, column=4, padx=(4, 0), pady=4)
+            self.sound_reset_buttons[key] = reset
+            self._refresh_sound_label(key)
+        self.audio_note = tk.StringVar(value="Dansk tale følger med. Egne lyde skal være WAV, højst 30 sekunder og 10 MB.")
+        ttk.Label(sounds, textvariable=self.audio_note, wraplength=650).grid(
+            row=3, column=0, columnspan=5, sticky="w", pady=(8, 0))
+        ttk.Button(sounds, text="Stop lyd", command=self.audio.stop).grid(
+            row=4, column=0, columnspan=2, sticky="w", pady=(8, 0))
+
         btns = ttk.Frame(main)
-        btns.grid(row=6, column=0, columnspan=4, sticky="we", pady=(10, 0))
-        ttk.Button(btns, text="Test advarsel", command=self._test).pack(side="left", padx=6)
+        btns.grid(row=7, column=0, columnspan=4, sticky="we", pady=(10, 0))
+        ttk.Button(btns, text="Test bannere", command=self._test).pack(side="left", padx=6)
         self.status = ttk.Label(btns, text="", foreground="#666666")
         self.status.pack(side="left", padx=12)
 
         ttk.Label(main, foreground="#666666", text=(
-            "Tip: tal normalt og se hvor bjælken ligger. sæt gul lidt over det. "
+            "Tip: tal normalt og se hvor bjælken ligger. Sæt gul lidt over det. "
             "Spil i 'borderless/vindue', ikke eksklusiv fuldskærm."
-        ), wraplength=560).grid(row=7, column=0, columnspan=4, sticky="w", pady=(10, 0))
+        ), wraplength=650).grid(row=8, column=0, columnspan=4, sticky="w", pady=(10, 0))
+
+    def _refresh_sound_label(self, key):
+        custom = self.cfg[f"sound_{key}"]
+        self.sound_labels[key].config(text="Egen WAV-fil" if custom else SPOKEN_MESSAGES[key])
+        self.sound_reset_buttons[key].config(state="normal" if custom else "disabled")
+
+    def _choose_sound(self, key):
+        selected = filedialog.askopenfilename(
+            parent=self.root, title=f"Vælg lyd til {dict(zip(SOUND_KEYS, ('gul', 'orange', 'rød')))[key]}",
+            filetypes=[("WAV-lydfiler", "*.wav"), ("Alle filer", "*.*")])
+        if not selected:
+            return
+        self.audio.stop()
+        try:
+            imported = import_custom_sound(selected, key, CONFIG_DIR)
+        except (OSError, ValueError) as error:
+            self.audio_note.set(str(error))
+            messagebox.showerror("Lyden kunne ikke vælges", str(error), parent=self.root)
+            return
+        self._set(f"sound_{key}", imported)
+        self._refresh_sound_label(key)
+        self.audio_note.set(f"Valgt: {os.path.basename(selected)}. En kopi er gemt med dine indstillinger.")
+
+    def _reset_sound(self, key):
+        self.audio.stop()
+        self._set(f"sound_{key}", "")
+        self._refresh_sound_label(key)
+        self.audio_note.set("Den danske standardstemme er gendannet.")
+
+    def _preview_sound(self, key):
+        self.audio.play(key, self.cfg[f"sound_{key}"], preview=True)
+        self.audio_note.set(self.audio.last_error or "Afspiller den valgte lyd. Brug Stop lyd for at afbryde.")
 
     def _pick_default_device(self, labels):
         saved = self.cfg.get("device_label")
@@ -414,9 +464,12 @@ class App:
 
     def _set(self, key, value):
         self.cfg[key] = value
+        if key in ("sound", "active") and not value:
+            self.audio.stop()
         save_config(self.cfg)
 
     def _test(self):
+        self.audio.stop()
         self.test_until = time.monotonic() + 3.0
 
     # ---------- logik
@@ -474,14 +527,16 @@ class App:
         self.root.after(self.POLL_MS, self._tick)
 
     def _alert(self, level, now, force_sound):
-        key, text, color, freq, ms = LEVELS[level]
+        key, text, color = LEVELS[level]
         self.overlay.show(text, color, self.cfg["position"])
-        if not self.cfg["sound"]:
+        if not self.cfg["sound"] or now < self.test_until:
             return
-        last = self.last_beep.get(level, 0.0)
+        last = self.last_sound.get(level, 0.0)
         if force_sound or now - last >= self.cfg["cooldown_s"]:
-            self.last_beep[level] = now
-            beep(freq, ms)
+            self.audio.play(key, self.cfg[f"sound_{key}"])
+            self.last_sound[level] = now
+            if self.audio.last_error:
+                self.audio_note.set(self.audio.last_error)
 
     def _draw_meter(self, db):
         c = self.meter
@@ -494,7 +549,7 @@ class App:
         lvl = self._classify(db)
         fill = LEVELS[lvl][2] if lvl >= 0 else "#3DBE5A"
         c.create_rectangle(0, 0, x(db), h, fill=fill, width=0)
-        for key, _t, color, _f, _m in LEVELS:
+        for key, _t, color in LEVELS:
             xx = x(self.cfg[key])
             c.create_line(xx, 0, xx, h, fill=color, width=2)
         c.create_text(w - 6, h // 2, text=f"{db:5.1f} dB", anchor="e",
@@ -502,6 +557,7 @@ class App:
 
     def quit(self):
         save_config(self.cfg)
+        self.audio.stop()
         self.mic.stop()
         self.root.destroy()
 
@@ -540,6 +596,7 @@ def smoke_test():
         devices = 0
     report = {"app": APP_NAME, "version": APP_VERSION, "microphones": devices,
               "numpy": np.__version__, "sounddevice": sd.__version__, "ok": True}
+    report["sounds"] = {key: wav_duration(default_sound(key)) for key in SOUND_KEYS}
     with open("smoke-test.json", "w", encoding="utf-8") as f:
         json.dump(report, f)
     root.destroy()
