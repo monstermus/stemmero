@@ -37,12 +37,13 @@ Godkendelse kræver reelle Windows-tests af processtop, ny proces-id, stop af he
 
 [GitHub-opgave 3](https://github.com/monstermus/stemmero/issues/3). Implementeret af subagent og integreret af root. Testresultat og release står i GitHub-opgavens kommentarer.
 
-Programmet skal begynde at lytte uden manuelt mikrofonvalg og følge Windows' standardinput.
+Programmet skal begynde at lytte uden manuelt mikrofonvalg. Automatisk valg skal prioritere den mikrofon, der faktisk får lyd ind, også når samtalen foregår i Discord.
 
 Krav:
 - Automatisk valg er standard, også ved opgradering fra en tidligere version.
-- Brug Windows' gyldige standardmikrofon. Hvis den mangler, vælges headset og derefter et andet input.
-- Windows' konkrete standardenhed skal have forrang, hvis lydbibliotekets standardindeks stadig peger på et andet headset.
+- Prioritér målt, vedvarende indgangslyd. Indtil der er et signal, bruges Windows' gyldige standardmikrofon og derefter tilgængelige input.
+- Et reelt signal må have forrang over Windows' standardvalg. Enheder matches på Windows-id, så gamle indeks og ens navne ikke bestemmer valget.
+- Undgå skift ved korte spikes og stilhed. Respektér manuelt valg, mute og egen advarselslyd. Gem ingen optagelser under sammenligningen.
 - Enheder uden inputkanaler kan aldrig vælges.
 - Skift af standardmikrofon og frakobling eller genindsættelse skal føre til nyt valg og genoptagelse af overvågning.
 - En voksen kan bruge et manuelt valg. Et midlertidigt fallback overskriver ikke denne præference.

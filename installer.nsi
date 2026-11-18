@@ -3,7 +3,7 @@
 
 Unicode true
 !define APPNAME "Stemmero"
-!define VERSION "1.2.2"
+!define VERSION "1.3.0"
 !define UNINSTKEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APPNAME}"
 
 Name "${APPNAME}"

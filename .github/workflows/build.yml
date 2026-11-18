@@ -91,7 +91,7 @@ jobs:
 
           Hvert advarselsniveau har en dansk stemme. Vælg dine egne WAV-filer under Advarselslyde, og brug Afspil til at høre dem. Gendan vælger standardstemmen igen.
 
-          Windows-mikrofon vælges automatisk. Indstillinger kræver en forældre-PIN. Opret PIN ved første opsætning, og gem gendannelseskoden privat.
+          Automatisk mikrofonvalg følger den mikrofon, der modtager et vedvarende lydsignal. Windows-mute indgår, og korte udsving samt egne advarselslyde ignoreres. Indstillinger kræver en forældre-PIN. Opret PIN ved første opsætning, og gem gendannelseskoden privat.
 
           Gentagne advarsler kan udløse skærmlås eller en nedlukningsanmodning. Funktionen er slået fra som standard. En voksen vælger antal, tidsrum og handling. Nedlukning angives i sekunder, hvor 0 betyder straks. Ved en positiv tid kan nedtællingen annulleres med en ny PIN-godkendelse.
 

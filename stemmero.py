@@ -27,9 +27,11 @@ from microphone_selection import build_input_devices, choose_input_device, windo
 from parental_pin import PinStore
 from parental_ui import ParentControls
 from warning_policy import PolicyConfig, WarningPolicy, WindowsActions
+from input_meter import InputActivityMonitor
+from signal_selection import SignalSelector
 
 APP_NAME = "Stemmero"
-APP_VERSION = "1.2.2"
+APP_VERSION = "1.3.0"
 POLICY_ACTION_LABELS = {"lock": "Lås skærmen", "shutdown": "Sluk computeren"}
 POLICY_MODE_LABELS = {"all": "Alle farver", "orange_red": "Kun orange og rød"}
 CONFIG_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), APP_NAME)
@@ -321,6 +323,10 @@ class App:
         self.device_signature = windows_input_signature()
         self.selected_device = None
         self.input_endpoint_ids = None
+        self.input_activity = InputActivityMonitor()
+        self.signal_selector = SignalSelector()
+        self.signal_endpoint_id = None
+        self.next_signal_check = 0.0
         self.settings_states = {}
         self.parent_dialog_open = False
         self.pending_window = None
@@ -375,7 +381,7 @@ class App:
         cb.pack(side="left")
         cb.bind("<<ComboboxSelected>>", self._manual_device_selected)
         self.auto_device_var = tk.BooleanVar(value=self.cfg["device_mode"] == "auto")
-        ttk.Checkbutton(mic_line, text="Vælg automatisk", variable=self.auto_device_var,
+        ttk.Checkbutton(mic_line, text="Vælg automatisk efter lyd", variable=self.auto_device_var,
                         command=self._change_device_mode).pack(side="left", padx=(8, 0))
 
         ttk.Label(main, text="Niveau nu:").grid(row=1, column=0, sticky="w", **pad)
@@ -584,11 +590,18 @@ class App:
             mapping = windows_capture_device_ids(getattr(sd, '_libname', None), [index for index, _ in self.devices])
             self.input_endpoint_ids = mapping if mapping is not None else {}
         signature = getattr(self, 'device_signature', None)
+        target = signature[0] if signature is not None else None
+        active_ids = signature[1] if signature is not None else None
+        if self.cfg['device_mode'] == 'auto' and getattr(self, 'signal_endpoint_id', None):
+            if signature is None or self.signal_endpoint_id in signature[1]:
+                target = self.signal_endpoint_id
+                if active_ids is None:
+                    active_ids = (target,)
         return choose_input_device(
             self.devices, default, self.cfg.get('device_label'), self.cfg['device_mode'],
-            windows_default_id=signature[0] if signature is not None else None,
+            windows_default_id=target,
             endpoint_ids=self.input_endpoint_ids,
-            active_endpoint_ids=signature[1] if signature is not None else None,
+            active_endpoint_ids=active_ids,
         )
 
     def _manual_device_selected(self, _event=None):
@@ -601,6 +614,10 @@ class App:
         if not self._require_parent():
             return
         self._set('device_mode', 'auto' if self.auto_device_var.get() else 'manual')
+        self.signal_endpoint_id = None
+        if hasattr(self, 'signal_selector'):
+            self.signal_selector.reset()
+            self.input_activity.set_endpoints(())
         self.device_combo.configure(state='disabled' if self.auto_device_var.get() else 'readonly')
         self._start_selected_device()
 
@@ -629,9 +646,11 @@ class App:
         if selected == self.selected_device and self.mic.running():
             return
         try:
+            self.warning_gate = WarningGate()
             self.mic.start(index)
             self.selected_device = selected
-            prefix = 'Automatisk' if self.cfg['device_mode'] == 'auto' else 'Lytter'
+            prefix = ('Automatisk, registreret lyd' if getattr(self, 'signal_endpoint_id', None)
+                      else 'Automatisk, afventer lyd') if self.cfg['device_mode'] == 'auto' else 'Lytter'
             self.status.configure(text=f'{prefix}: {label}')
         except (sd.PortAudioError, OSError) as error:
             self.selected_device = None
@@ -645,6 +664,10 @@ class App:
         changed = signature is not None and signature != self.device_signature
         if signature is not None:
             self.device_signature = signature
+            if getattr(self, 'signal_endpoint_id', None) and self.signal_endpoint_id not in signature[1]:
+                self.signal_endpoint_id = None
+                if hasattr(self, 'signal_selector'):
+                    self.signal_selector.reset()
         unavailable = not self.mic.running()
         # En COM-fejl må ikke afbryde en rask lydstrøm ved hvert tjek.
         if changed or unavailable and now >= self.next_retry:
@@ -653,6 +676,35 @@ class App:
                 self._reconnect()
             except (sd.PortAudioError, OSError) as error:
                 self.status.configure(text=f'Venter på mikrofon ... ({error})')
+
+    def _check_signal_activity(self, now):
+        if not hasattr(self, 'signal_selector') or now < self.next_signal_check:
+            return
+        self.next_signal_check = now + 0.2
+        if self.cfg['device_mode'] != 'auto':
+            self.input_activity.set_endpoints(())
+            return
+        mapping = self.input_endpoint_ids or {}
+        identifiers = set(mapping.values())
+        signature = self.device_signature
+        if signature is not None:
+            identifiers.intersection_update(signature[1])
+        self.input_activity.set_endpoints(identifiers)
+        current = mapping.get(self.selected_device[0]) if self.selected_device is not None else None
+        until = getattr(self.audio, 'until', 0.0)
+        own_sound_until = until + 0.5 if type(until) in (int, float) and until > 0 else 0.0
+        if now < max(self.test_until, self.preview_until, own_sound_until):
+            self.signal_selector.select({}, current, now)
+            return
+        sample = self.input_activity.snapshot()
+        if sample is None or now - sample.at > 0.5:
+            self.signal_selector.select({}, current, now)
+            return
+        peaks = {identifier: level for identifier, level in sample.peaks.items() if identifier in identifiers}
+        selected = self.signal_selector.select(peaks, current, sample.at)
+        if selected is not None and selected != current and selected in identifiers:
+            self.signal_endpoint_id = selected
+            self._start_selected_device()
 
     def _apply_hold(self, _event=None):
         if not self._require_parent():
@@ -791,6 +843,7 @@ class App:
     def _tick(self):
         now = time.monotonic()
         self._check_microphone(now)
+        self._check_signal_activity(now)
         if self.parents.unlocked and now >= self.parents.unlocked_until:
             self.parents.lock()
         if now >= getattr(self, 'next_parent_refresh', 0):
@@ -873,6 +926,7 @@ class App:
     def quit(self):
         save_config(self.cfg)
         self.audio.stop()
+        self.input_activity.close()
         self.mic.stop()
         self.root.destroy()
 

@@ -8,7 +8,7 @@ Stemmero advarer dig, når du taler for højt i headsettet under spil. Et gult, 
 
 1. Hent **Stemmero-Setup.exe** via linket ovenfor.
 2. Kør filen og følg installeren. Du behøver hverken Python, en GitHub-konto eller administratorrettigheder.
-3. Stemmero vælger automatisk Windows' standardmikrofon. En voksen åbner programmet fra Start-menuen og vælger **Opret PIN**. Gem gendannelseskoden privat.
+3. Stemmero vælger automatisk mikrofonen efter indgående lyd. En voksen åbner programmet fra Start-menuen og vælger **Opret PIN**. Gem gendannelseskoden privat.
 4. Lås indstillingerne op, tal normalt, og sæt den gule grænse lidt over dit normale niveau.
 5. Brug **Afspil** ved hvert lydniveau og **Test bannere** til visningen. Lås indstillingerne igen. Brug et spil i vindue eller borderless.
 
@@ -46,11 +46,13 @@ Lyd behandles i hukommelsen på din computer. Programmet gemmer eller sender ing
 
 ## Automatisk mikrofon
 
-**Vælg automatisk** er slået til som standard. Programmet følger Windows' standardinput. Hvis det ikke findes, prøver det et headset og derefter et andet gyldigt input. Et enhedstjek opdager standardskift og frakobling uden løbende at afbryde en rask lydstrøm. Mangler alle mikrofoner, viser programmet en besked og forsøger igen.
+**Vælg automatisk efter lyd** er slået til som standard. Stemmero sammenligner mikrofonernes aktuelle indgangsniveauer og vælger den, der modtager et vedvarende tydeligt signal. Målingerne kommer fra Windows' indgangsmålere, også når et program som Discord bruger mikrofonen. Der kræves ingen Discord-konto eller forbindelse til Discord.
 
-Ved flere headset eller flere indgange til samme headset bruger automatisk valg Windows' præcise standardenhed. Programmer som Discord kan have deres eget mikrofonvalg. Vælg samme mikrofon manuelt i Stemmero, hvis det valg skal følges.
+Ved stilhed beholder programmet den valgte mikrofon. Indtil der er målt et signal, bruges Windows' standardinput. Ved flere signaler kræver et skift en tydelig forskel i niveau og vedvarende aktivitet. Korte udsving, lydafprøvning og programmets egne advarselslyde får ikke valget til at hoppe. Der er mindst fem sekunder mellem automatiske skift. Windows-mute og indgangslydstyrke indgår i målingen.
 
-En voksen kan slå automatisk valg fra og vælge en bestemt mikrofon. Hvis den mangler midlertidigt, bevarer programmet valget og bruger et midlertidigt input, indtil den valgte mikrofon vender tilbage.
+Niveaumålingen foregår i baggrunden. Den gemmer ingen lyd og åbner ingen ekstra optagestrømme. Automatisk valg genkender signalniveau, ikke hvem der taler. Baggrundsstøj kan derfor også påvirke valget. Nogle drivere i eksklusiv lydtilstand kan ikke levere Windows-målinger. Hvis målinger mangler, beholder programmet sit eksisterende valg.
+
+En voksen kan slå automatisk valg fra med PIN og vælge en bestemt mikrofon. Hvis den mangler midlertidigt, bevarer programmet præferencen og bruger et midlertidigt input, indtil den valgte mikrofon vender tilbage. Hvis alle mikrofoner mangler, viser programmet det og forsøger igen.
 
 ## Forældre-PIN
 
