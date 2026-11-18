@@ -23,13 +23,13 @@ import numpy as np
 import sounddevice as sd
 
 from warning_audio import WarningAudio, SOUND_KEYS, SPOKEN_MESSAGES, default_sound, import_custom_sound, wav_duration
-from microphone_selection import build_input_devices, choose_input_device, windows_input_signature
+from microphone_selection import build_input_devices, choose_input_device, windows_input_signature, windows_capture_device_ids
 from parental_pin import PinStore
 from parental_ui import ParentControls
 from warning_policy import PolicyConfig, WarningPolicy, WindowsActions
 
 APP_NAME = "Stemmero"
-APP_VERSION = "1.2.1"
+APP_VERSION = "1.2.2"
 POLICY_ACTION_LABELS = {"lock": "Lås skærmen", "shutdown": "Sluk computeren"}
 POLICY_MODE_LABELS = {"all": "Alle farver", "orange_red": "Kun orange og rød"}
 CONFIG_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), APP_NAME)
@@ -320,6 +320,7 @@ class App:
         self.last_device_refresh = time.monotonic()
         self.device_signature = windows_input_signature()
         self.selected_device = None
+        self.input_endpoint_ids = None
         self.settings_states = {}
         self.parent_dialog_open = False
         self.pending_window = None
@@ -571,12 +572,24 @@ class App:
         self.root.iconify()
 
     def _pick_default_device(self, labels):
+        selected = self._input_choice()
+        return selected[1] if selected else ''
+
+    def _input_choice(self):
         try:
             default = sd.default.device[0]
         except (sd.PortAudioError, IndexError):
             default = None
-        selected = choose_input_device(self.devices, default, self.cfg.get('device_label'), self.cfg['device_mode'])
-        return selected[1] if selected else ''
+        if getattr(self, 'input_endpoint_ids', None) is None:
+            mapping = windows_capture_device_ids(getattr(sd, '_libname', None), [index for index, _ in self.devices])
+            self.input_endpoint_ids = mapping if mapping is not None else {}
+        signature = getattr(self, 'device_signature', None)
+        return choose_input_device(
+            self.devices, default, self.cfg.get('device_label'), self.cfg['device_mode'],
+            windows_default_id=signature[0] if signature is not None else None,
+            endpoint_ids=self.input_endpoint_ids,
+            active_endpoint_ids=signature[1] if signature is not None else None,
+        )
 
     def _manual_device_selected(self, _event=None):
         if not self._require_parent() or self.cfg['device_mode'] != 'manual':
@@ -594,6 +607,7 @@ class App:
     def _reconnect(self):
         self.mic.stop()
         self.selected_device = None
+        self.input_endpoint_ids = None
         self.warning_gate = WarningGate()
         sd._terminate()
         sd._initialize()
@@ -603,11 +617,7 @@ class App:
         self._start_selected_device()
 
     def _start_selected_device(self):
-        try:
-            default = sd.default.device[0]
-        except (sd.PortAudioError, IndexError):
-            default = None
-        selected = choose_input_device(self.devices, default, self.cfg.get('device_label'), self.cfg['device_mode'])
+        selected = self._input_choice()
         if selected is None:
             self.mic.stop()
             self.selected_device = None

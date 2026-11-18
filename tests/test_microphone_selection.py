@@ -1,6 +1,7 @@
 import ctypes
 import sys
 import unittest
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import microphone_selection as selection
@@ -27,11 +28,76 @@ class MicrophoneSelectionTests(unittest.TestCase):
     def test_manual_selection_stays_when_the_windows_default_changes(self):
         self.assertEqual(choose_input_device(self.devices, 0, self.devices[1][1], 'manual'), self.devices[1])
 
+    def test_manual_selection_stays_ahead_of_the_windows_endpoint_id(self):
+        self.assertEqual(
+            choose_input_device(
+                self.devices, 0, self.devices[1][1], 'manual',
+                windows_default_id='endpoint-0',
+                endpoint_ids={0: 'endpoint-0', 3: 'endpoint-3'},
+                active_endpoint_ids=('endpoint-0', 'endpoint-3'),
+            ),
+            self.devices[1],
+        )
+
+    def test_exact_active_windows_endpoint_wins_with_identical_labels(self):
+        devices = [(0, 'Headset [WASAPI]'), (3, 'Headset [WASAPI]')]
+        selected = choose_input_device(
+            devices, 0,
+            windows_default_id='endpoint-3',
+            endpoint_ids={0: 'endpoint-0', 3: 'endpoint-3'},
+            active_endpoint_ids=('endpoint-3',),
+        )
+        self.assertEqual(selected, devices[1])
+
+    def test_inactive_windows_default_falls_back_to_a_mapped_active_input(self):
+        selected = choose_input_device(
+            self.devices, 0,
+            windows_default_id='inactive-endpoint',
+            endpoint_ids={0: 'inactive-endpoint', 3: 'active-endpoint'},
+            active_endpoint_ids=('active-endpoint',),
+        )
+        self.assertEqual(selected, self.devices[1])
+
+    def test_mapped_active_input_beats_unknown_portaudio_default(self):
+        selected = choose_input_device(
+            self.devices, 0,
+            windows_default_id='unmapped-default',
+            endpoint_ids={3: 'active-endpoint'},
+            active_endpoint_ids=('active-endpoint',),
+        )
+        self.assertEqual(selected, self.devices[1])
+
+    def test_valid_windows_snapshot_with_no_active_inputs_returns_none(self):
+        selected = choose_input_device(
+            self.devices, 0,
+            windows_default_id=None,
+            endpoint_ids={0: 'inactive-endpoint', 3: 'inactive-headset'},
+            active_endpoint_ids=(),
+        )
+        self.assertIsNone(selected)
+
     def test_missing_manual_preference_is_not_replaced_by_its_fallback(self):
         saved_label = self.devices[1][1]
         self.assertEqual(choose_input_device(self.devices[:1], 0, saved_label, 'manual'), self.devices[0])
         self.assertEqual(saved_label, self.devices[1][1])
         self.assertEqual(choose_input_device(self.devices, 0, saved_label, 'manual'), self.devices[1])
+
+    def test_unavailable_manual_endpoint_uses_active_windows_default(self):
+        selected = choose_input_device(
+            self.devices, 0, self.devices[0][1], 'manual',
+            windows_default_id='active-endpoint',
+            endpoint_ids={0: 'old-endpoint', 3: 'active-endpoint'},
+            active_endpoint_ids=('active-endpoint',),
+        )
+        self.assertEqual(selected, self.devices[1])
+
+    def test_no_active_windows_inputs_also_blocks_stale_manual_choice(self):
+        selected = choose_input_device(
+            self.devices, 0, self.devices[0][1], 'manual',
+            endpoint_ids={0: 'old-endpoint', 3: 'other-endpoint'},
+            active_endpoint_ids=(),
+        )
+        self.assertIsNone(selected)
 
     def test_malformed_or_missing_defaults_use_headset(self):
         for default in (None, -1, -99, 999, '3', 3.0, True, object()):
@@ -143,6 +209,56 @@ class WindowsInputSignatureTests(unittest.TestCase):
         self.assertIsInstance(active, tuple)
         self.assertEqual(active, tuple(sorted(set(active))))
         self.assertTrue(all(isinstance(identifier, str) and identifier for identifier in active))
+
+
+class WindowsCaptureDeviceIdsTests(unittest.TestCase):
+    @staticmethod
+    def set_pointer(output, value):
+        ctypes.cast(output, ctypes.POINTER(ctypes.c_void_p))[0] = value
+
+    def test_missing_portaudio_extension_returns_none(self):
+        with patch.object(selection.sys, 'platform', 'win32'), \
+             patch.object(selection.ctypes, 'CDLL', return_value=SimpleNamespace()), \
+             patch.object(selection.ctypes, 'WinDLL', create=True):
+            self.assertIsNone(selection.windows_capture_device_ids('portaudio.dll', [0]))
+
+    def test_reads_ids_from_global_indices_without_releasing_borrowed_interfaces(self):
+        portaudio = Mock()
+        requested_indices = []
+
+        def get_imm_device(index, output):
+            requested_indices.append(index)
+            if index == 0:  # A non-WASAPI index is not mappable.
+                return -999
+            self.set_pointer(output, 0x2000 + index)
+            return 0
+
+        portaudio.PaWasapi_GetIMMDevice.side_effect = get_imm_device
+        ole32 = Mock()
+        ole32.CoInitializeEx.return_value = 0
+        allocations = []
+
+        def get_endpoint_id(interface, slot, _argtypes, *arguments):
+            self.assertEqual(slot, 5)  # IMMDevice::GetId
+            text = ctypes.create_unicode_buffer(f'endpoint-{interface.value - 0x2000}')
+            allocations.append(text)
+            self.set_pointer(arguments[0], ctypes.addressof(text))
+            return 0
+
+        with (
+            patch.object(selection.sys, 'platform', 'win32'),
+            patch.object(selection.ctypes, 'CDLL', return_value=portaudio),
+            patch.object(selection.ctypes, 'WinDLL', return_value=ole32, create=True),
+            patch.object(selection, '_com_call', side_effect=get_endpoint_id),
+            patch.object(selection, '_release') as release,
+        ):
+            mapping = selection.windows_capture_device_ids('portaudio.dll', [0, 3])
+
+        self.assertEqual(mapping, {3: 'endpoint-3'})
+        self.assertEqual(requested_indices, [0, 3])
+        release.assert_not_called()
+        self.assertEqual(ole32.CoTaskMemFree.call_count, 1)
+        ole32.CoUninitialize.assert_called_once()
 
 
 class WindowsComLifetimeTests(unittest.TestCase):

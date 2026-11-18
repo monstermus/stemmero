@@ -42,6 +42,7 @@ Programmet skal begynde at lytte uden manuelt mikrofonvalg og følge Windows' st
 Krav:
 - Automatisk valg er standard, også ved opgradering fra en tidligere version.
 - Brug Windows' gyldige standardmikrofon. Hvis den mangler, vælges headset og derefter et andet input.
+- Windows' konkrete standardenhed skal have forrang, hvis lydbibliotekets standardindeks stadig peger på et andet headset.
 - Enheder uden inputkanaler kan aldrig vælges.
 - Skift af standardmikrofon og frakobling eller genindsættelse skal føre til nyt valg og genoptagelse af overvågning.
 - En voksen kan bruge et manuelt valg. Et midlertidigt fallback overskriver ikke denne præference.

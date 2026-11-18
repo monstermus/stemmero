@@ -48,6 +48,8 @@ Lyd behandles i hukommelsen på din computer. Programmet gemmer eller sender ing
 
 **Vælg automatisk** er slået til som standard. Programmet følger Windows' standardinput. Hvis det ikke findes, prøver det et headset og derefter et andet gyldigt input. Et enhedstjek opdager standardskift og frakobling uden løbende at afbryde en rask lydstrøm. Mangler alle mikrofoner, viser programmet en besked og forsøger igen.
 
+Ved flere headset eller flere indgange til samme headset bruger automatisk valg Windows' præcise standardenhed. Programmer som Discord kan have deres eget mikrofonvalg. Vælg samme mikrofon manuelt i Stemmero, hvis det valg skal følges.
+
 En voksen kan slå automatisk valg fra og vælge en bestemt mikrofon. Hvis den mangler midlertidigt, bevarer programmet valget og bruger et midlertidigt input, indtil den valgte mikrofon vender tilbage.
 
 ## Forældre-PIN

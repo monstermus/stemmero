@@ -150,7 +150,8 @@ def windows_input_signature() -> tuple[str | None, tuple[str, ...]] | None:
 
     Et Windows-system uden mikrofon returnerer ``(None, ())``. Anden
     platform eller fejl returnerer ``None``. ID'erne bruges kun til
-    sammenligning, så PortAudio kun genindlæses efter en ændring.
+    ændringsdetektion og til at matche Windows' standardinput med et
+    PortAudio WASAPI-input ved automatisk valg.
     """
     if sys.platform != 'win32':
         return None
@@ -159,6 +160,66 @@ def windows_input_signature() -> tuple[str | None, tuple[str, ...]] | None:
             return devices.default_id(), tuple(sorted(set(devices.active_ids())))
     except (OSError, AttributeError, ValueError):
         return None
+
+
+def windows_capture_device_ids(library_path, device_indices) -> dict[int, str] | None:
+    """Map global PortAudio indexes to their WASAPI MMDevice IDs.
+
+    Non-WASAPI indexes are skipped. The IMMDevice pointer returned by
+    PortAudio is borrowed, so this function reads its ID without releasing
+    the interface. ``None`` means the Windows extension could not be used.
+    """
+    if sys.platform != 'win32' or not library_path:
+        return None
+
+    try:
+        library = ctypes.CDLL(library_path)
+        get_imm_device = library.PaWasapi_GetIMMDevice
+        get_imm_device.argtypes = [ctypes.c_int, _POINTER_OUT]
+        get_imm_device.restype = _HRESULT
+        ole32 = ctypes.WinDLL('ole32', use_last_error=True)
+        ole32.CoInitializeEx.argtypes = [_POINTER, _UINT]
+        ole32.CoInitializeEx.restype = _HRESULT
+        ole32.CoUninitialize.argtypes = []
+        ole32.CoUninitialize.restype = None
+        ole32.CoTaskMemFree.argtypes = [_POINTER]
+        ole32.CoTaskMemFree.restype = None
+    except (AttributeError, OSError, TypeError, ValueError):
+        return None
+
+    initialized = False
+    try:
+        status = ole32.CoInitializeEx(None, 0)
+        if status & 0xffffffff != _RPC_E_CHANGED_MODE:
+            _check_hresult(status)
+            initialized = True
+
+        result = {}
+        for value in device_indices:
+            index = _device_index(value)
+            if index is None or index > 0x7fffffff:
+                continue
+            endpoint = _POINTER()
+            status = get_imm_device(index, ctypes.byref(endpoint))
+            if status < 0 or not endpoint:
+                continue
+
+            identifier = _POINTER()
+            try:
+                _check_hresult(_com_call(endpoint, 5, (_POINTER_OUT,), ctypes.byref(identifier)))
+                if identifier:
+                    result[index] = ctypes.wstring_at(identifier)
+            except (OSError, AttributeError, ValueError):
+                continue
+            finally:
+                if identifier:
+                    ole32.CoTaskMemFree(identifier)
+        return result
+    except (OSError, AttributeError, TypeError, ValueError):
+        return None
+    finally:
+        if initialized:
+            ole32.CoUninitialize()
 
 
 def _device_index(value):
@@ -211,6 +272,10 @@ def choose_input_device(
     default_input,
     saved_label: str | None = None,
     mode: str = 'auto',
+    *,
+    windows_default_id: str | None = None,
+    endpoint_ids: Mapping | None = None,
+    active_endpoint_ids: Sequence[str] | None = None,
 ) -> InputDevice | None:
     """Vælg standardinput i auto, eller det gemte navn i manuel tilstand.
 
@@ -233,16 +298,56 @@ def choose_input_device(
     if not available:
         return None
 
+    default_index = _device_index(default_input)
+    active_snapshot = (
+        isinstance(active_endpoint_ids, Sequence)
+        and not isinstance(active_endpoint_ids, (str, bytes))
+    )
+    active_ids = (
+        {identifier for identifier in active_endpoint_ids if isinstance(identifier, str)}
+        if active_snapshot else None
+    )
+    endpoint_ids = endpoint_ids if isinstance(endpoint_ids, Mapping) else {}
+
+    def endpoint_id(index):
+        identifier = endpoint_ids.get(index)
+        return identifier if isinstance(identifier, str) and identifier else None
+
+    if active_snapshot and not active_ids:
+        return None
+
     if mode == 'manual' and isinstance(saved_label, str):
         for device in available:
             if device[1] == saved_label:
-                return device
+                identifier = endpoint_id(device[0])
+                if not active_snapshot or identifier is None or identifier in active_ids:
+                    return device
 
-    default_index = _device_index(default_input)
-    for device in available:
-        if device[0] == default_index:
-            return device
-    for device in available:
+    if active_snapshot and isinstance(windows_default_id, str):
+        if windows_default_id in active_ids:
+            for index, label in available:
+                if endpoint_id(index) == windows_default_id:
+                    return index, label
+
+    if active_snapshot:
+        active_devices = [device for device in available if endpoint_id(device[0]) in active_ids]
+        for device in active_devices:
+            if device[0] == default_index:
+                return device
+        if active_devices:
+            return active_devices[0]
+
+    default_device = next((device for device in available if device[0] == default_index), None)
+    if default_device is not None:
+        identifier = endpoint_id(default_device[0])
+        if not active_snapshot or identifier is None or identifier in active_ids:
+            return default_device
+
+    fallback_devices = [
+        device for device in available
+        if not active_snapshot or endpoint_id(device[0]) is None or endpoint_id(device[0]) in active_ids
+    ]
+    for device in fallback_devices:
         if any(word in device[1].casefold() for word in _HEADSET_WORDS):
             return device
-    return available[0]
+    return fallback_devices[0] if fallback_devices else None
